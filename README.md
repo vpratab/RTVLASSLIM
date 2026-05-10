@@ -11,6 +11,7 @@ It is not a finished product, not a validated benchmark result, and not a resear
 - Signed evidence packets using SHA-256 and Ed25519.
 - A process -> sign -> purge orchestrator that explicitly wipes raw MAVLink frame buffers after attestation.
 - An offline CSV validation harness for replaying logged traces and summarizing detection outcomes.
+- A PX4 SIH capture-and-benchmark path that records synchronized monitor inputs and measures simulator-only detection outcomes plus per-sample evaluation latency.
 
 ## What Is Implemented
 
@@ -23,7 +24,7 @@ It is not a finished product, not a validated benchmark result, and not a resear
   - Cholesky-based Mahalanobis distance evaluation.
   - EWMA risk accumulation and `Trusted` / `Flagged` / `Rejected` verdicts.
 - `telemetry_adapter`
-  - MAVLink UDP listener for PX4-style telemetry on `127.0.0.1:14550`.
+  - MAVLink UDP listener for PX4-style telemetry.
   - Geodetic-to-NED conversion and home-position establishment.
   - GPS/IMU time alignment against EKF history.
   - Auxiliary barometer and heading observations derived from `HIGHRES_IMU`.
@@ -37,12 +38,15 @@ It is not a finished product, not a validated benchmark result, and not a resear
   - End-to-end mission loop that processes telemetry, evaluates GPS consistency, signs evidence, writes to a sink, and purges raw frame bytes from memory.
 - `validation`
   - CSV-driven offline replay harness with anomaly/rejection TPR/FPR summaries.
+- `benchmark`
+  - Capture format for synchronized PX4 monitor inputs.
+  - Spoofed replay generation by perturbing captured GPS position/velocity.
+  - Simulator-only nominal/spoofed report generation with latency statistics.
 
 ## What Is Not Implemented
 
-- No PX4 SITL or hardware-in-the-loop run has been completed from this repository yet.
 - No TEXBAT dataset replay or TEXBAT benchmark result exists yet.
-- No real-world detection-rate, false-positive, or latency benchmark is claimed here.
+- No real-world or hardware-flight detection-rate, false-positive, or latency benchmark is claimed here.
 - No hardware-backed secure element, HSM, TPM, enclave, or flight-controller integration is present.
 - No GPS update is fused back into the filter state yet; GPS is monitored, not used as a measurement update.
 - No production persistence or distributed-ledger sink exists; only local file/log sinks are provided.
@@ -53,10 +57,18 @@ The code in this repository has been locally verified with:
 
 ```powershell
 cargo test --lib
-cargo check --features telemetry,attestation --lib
+cargo check --all-targets
 ```
 
-At the time of writing, the crate passes 14 library tests covering:
+and, inside WSL2 Ubuntu with PX4 SIH built from the local `external/PX4-Autopilot` clone:
+
+```bash
+bash scripts/wsl_inline_sniff.sh --connection udpout:127.0.0.1:18570 --event-limit 500 --gps-limit 1 --suppress-imu
+bash scripts/wsl_inline_live.sh
+bash scripts/wsl_px4_benchmark.sh 60
+```
+
+At the time of writing, the crate passes 17 library tests covering:
 
 - IMU propagation staying stable at rest.
 - GPS innovation rejection on a large spoof-like offset.
@@ -66,6 +78,21 @@ At the time of writing, the crate passes 14 library tests covering:
 - Ed25519 evidence signing and tamper detection.
 - An orchestrator integration path that emits a rejected verdict and persists signed evidence.
 - Offline CSV validation report generation.
+- First-sample EKF timestamp bootstrapping for live PX4 startup.
+
+The live PX4 verification that has actually been run is narrow and specific:
+
+- PX4 SIH was built and launched inside WSL2.
+- The local PX4 startup script was patched to stream `GPS_RAW_INT` and `HIGHRES_IMU` on the GCS MAVLink port (`18570`).
+- `scripts/wsl_inline_sniff.sh` confirmed `HIGHRES_IMU` and queued GPS observations on `udpout:127.0.0.1:18570`.
+- `scripts/wsl_inline_live.sh` completed an end-to-end orchestrator run and emitted 3 signed `Trusted` verdicts over 72 processed packets (`69` IMU, `3` GPS), producing a non-empty evidence file at `artifacts/wsl_px4_sitl_evidence.bin`.
+- `scripts/wsl_px4_benchmark.sh 60` captured 60 synchronized PX4 SIH samples on `2026-05-10`, replayed them as a nominal dataset and as an injected-spoof dataset, and produced the following simulator-only results:
+  - nominal dataset: `60/0/0` trusted/flagged/rejected, anomaly FPR `0.000`, rejected FPR `0.000`
+  - spoofed replay dataset: `0/0/60` trusted/flagged/rejected, anomaly TPR/FPR `1.000/0.000`, rejected TPR/FPR `1.000/0.000`
+  - nominal evaluation latency mean/p95/max: `333.17 / 377.31 / 935.51 us`
+  - spoofed evaluation latency mean/p95/max: `312.32 / 334.31 / 382.50 us`
+
+Those numbers are narrow and should be read narrowly: they come from PX4 SIH telemetry captured in WSL2 and a synthetic GPS spoof injected into the captured dataset by this repository's own benchmark tooling. They are not TEXBAT results, not a live adversarial spoofing test, and not a claim about general real-world performance.
 
 ## How To Run
 
@@ -73,11 +100,20 @@ At the time of writing, the crate passes 14 library tests covering:
 cargo test --lib
 cargo run --example gps_spoof
 cargo run --example run_validation
+cargo run --example px4_sitl_live -- --connection udpout:127.0.0.1:18570
+cargo run --example run_monitor_benchmark -- artifacts/px4_monitor_dataset.csv artifacts/px4_monitor_dataset_spoofed.csv
 ```
 
 `run_validation` replays the included `examples/synthetic_validation.csv` file and prints TPR/FPR-style summary metrics.
 
-There is still no complete live PX4 SITL demo binary or TEXBAT benchmark result in this repo yet. The strongest exercised paths today are the library test suite, the synthetic spoofing example, the offline validation example, and the UDP/MAVLink loopback test.
+For the live PX4 path that has been verified here, run it from WSL2 so PX4 and the Rust client share the same localhost network stack:
+
+```bash
+bash scripts/wsl_inline_live.sh
+bash scripts/wsl_px4_benchmark.sh 60
+```
+
+There is still no TEXBAT result, no live adversarial spoofed PX4 mission, and no claim beyond the simulator-only injected-spoof benchmark above. The strongest exercised paths today are the library test suite, the synthetic spoofing example, the offline validation example, the UDP/MAVLink loopback test, the WSL-local PX4 SIH nominal run, and the WSL-local PX4 SIH capture/replay benchmark.
 
 ## Honest Status
 
@@ -86,4 +122,5 @@ This repository should be understood as an early-stage systems prototype:
 - stronger than a toy class assignment in architecture and engineering discipline
 - not yet a validated defense-grade detector
 - not yet novel research by itself
+- now verified on a narrow PX4 SIH simulator capture/replay benchmark with clean nominal behavior and full rejection of one injected spoof profile
 - potentially useful as a foundation for a real PX4/TEXBAT validation effort

@@ -2,9 +2,11 @@ use core::fmt;
 
 use heapless::{Deque, Vec, spsc::Queue};
 use mavlink::{
-    MavConnection, MavHeader, connect,
+    MavConnection, MavHeader, MessageData, connect,
     dialects::common::{
-        GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, GpsFixType, HIGHRES_IMU_DATA, MavMessage,
+        COMMAND_LONG_DATA, GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, GpsFixType,
+        HEARTBEAT_DATA, HIGHRES_IMU_DATA, MavAutopilot, MavCmd, MavModeFlag, MavMessage,
+        MavState, MavType,
     },
     error::{MessageReadError, MessageWriteError},
 };
@@ -25,6 +27,13 @@ pub const MAX_MAVLINK_FRAME_BYTES: usize = 280;
 const GPS_QUEUE_CAPACITY: usize = 32;
 const STATE_HISTORY_CAPACITY: usize = 64;
 const EPOCH_TIME_THRESHOLD_USEC: u64 = 1_000_000_000_000;
+const DEFAULT_GCS_SYSTEM_ID: u8 = 255;
+const DEFAULT_GCS_COMPONENT_ID: u8 = 190;
+const DEFAULT_PX4_TARGET_SYSTEM_ID: u8 = 1;
+const DEFAULT_PX4_TARGET_COMPONENT_ID: u8 = 1;
+const HIGHRES_IMU_INTERVAL_US: i32 = 10_000;
+const GLOBAL_POSITION_INT_INTERVAL_US: i32 = 100_000;
+const GPS_RAW_INT_INTERVAL_US: i32 = 200_000;
 
 pub type MavlinkFrameBuffer = Vec<u8, MAX_MAVLINK_FRAME_BYTES>;
 
@@ -108,12 +117,12 @@ pub struct SynchronizedGpsSample {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct PendingGpsObservation {
-    timestamp_ns: u64,
-    gps_observation: GpsObservation,
-    barometer_observation: Option<BarometerObservation>,
-    heading_observation: Option<HeadingObservation>,
-    raw_frame: MavlinkFrameBuffer,
+pub struct PendingGpsSample {
+    pub timestamp_ns: u64,
+    pub gps_observation: GpsObservation,
+    pub barometer_observation: Option<BarometerObservation>,
+    pub heading_observation: Option<HeadingObservation>,
+    pub raw_frame: MavlinkFrameBuffer,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -130,7 +139,7 @@ pub struct MavlinkSubscriber {
     latest_gps_quality: Option<GpsQualityMetrics>,
     latest_auxiliary_observations: AuxiliaryObservations,
     home_pressure_altitude_m: Option<f32>,
-    pending_gps_observations: Queue<PendingGpsObservation, GPS_QUEUE_CAPACITY>,
+    pending_gps_observations: Queue<PendingGpsSample, GPS_QUEUE_CAPACITY>,
     state_history: Deque<EskfState, STATE_HISTORY_CAPACITY>,
 }
 
@@ -166,6 +175,49 @@ impl MavlinkSubscriber {
         self.home_position
     }
 
+    pub fn announce_ground_station(&self) -> Result<(), TelemetryError> {
+        let header = outbound_header();
+        let heartbeat = MavMessage::HEARTBEAT(HEARTBEAT_DATA {
+            custom_mode: 0,
+            mavtype: MavType::MAV_TYPE_GCS,
+            autopilot: MavAutopilot::MAV_AUTOPILOT_INVALID,
+            base_mode: MavModeFlag::empty(),
+            system_status: MavState::MAV_STATE_ACTIVE,
+            mavlink_version: 3,
+        });
+        self.connection
+            .send(&header, &heartbeat)
+            .map_err(TelemetryError::MavlinkWriteError)?;
+        Ok(())
+    }
+
+    pub fn request_standard_message_streams(&self) -> Result<(), TelemetryError> {
+        let header = outbound_header();
+        for (message_id, interval_us) in [
+            (HIGHRES_IMU_DATA::ID, HIGHRES_IMU_INTERVAL_US),
+            (GLOBAL_POSITION_INT_DATA::ID, GLOBAL_POSITION_INT_INTERVAL_US),
+            (GPS_RAW_INT_DATA::ID, GPS_RAW_INT_INTERVAL_US),
+        ] {
+            let command = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
+                target_system: DEFAULT_PX4_TARGET_SYSTEM_ID,
+                target_component: DEFAULT_PX4_TARGET_COMPONENT_ID,
+                command: MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL,
+                confirmation: 0,
+                param1: message_id as f32,
+                param2: interval_us as f32,
+                param3: 0.0,
+                param4: 0.0,
+                param5: 0.0,
+                param6: 0.0,
+                param7: 0.0,
+            });
+            self.connection
+                .send(&header, &command)
+                .map_err(TelemetryError::MavlinkWriteError)?;
+        }
+        Ok(())
+    }
+
     pub fn record_predicted_state(&mut self, state: &EskfState) {
         if self.state_history.is_full() {
             let _ = self.state_history.pop_front();
@@ -183,48 +235,22 @@ impl MavlinkSubscriber {
                 .recv()
                 .map_err(TelemetryError::MavlinkReadError)?;
 
-            match message {
-                MavMessage::HIGHRES_IMU(data) => {
-                    let raw_frame = encode_mavlink_frame(
-                        header,
-                        &MavMessage::HIGHRES_IMU(data.clone()),
-                    )
-                        .map_err(TelemetryError::FrameEncodingError)?;
-                    let imu_sample = self.parse_highres_imu(data);
-                    return Ok(TelemetryUpdate::Imu {
-                        sample: imu_sample,
-                        raw_frame,
-                    });
-                }
-                MavMessage::GPS_RAW_INT(data) => {
-                    let mut raw_frame = encode_mavlink_frame(
-                        header,
-                        &MavMessage::GPS_RAW_INT(data.clone()),
-                    )
-                    .map_err(TelemetryError::FrameEncodingError)?;
-                    self.update_gps_quality(data);
-                    purge_frame_buffer(&mut raw_frame);
-                }
-                MavMessage::GLOBAL_POSITION_INT(data) => {
-                    let raw_frame = encode_mavlink_frame(
-                        header,
-                        &MavMessage::GLOBAL_POSITION_INT(data.clone()),
-                    )
-                    .map_err(TelemetryError::FrameEncodingError)?;
-                    if let Some(pending_observation) = self.try_build_gps_observation(data, raw_frame)? {
-                        let timestamp_s = pending_observation.gps_observation.timestamp_s;
-                        self.pending_gps_observations
-                            .enqueue(pending_observation)
-                            .map_err(|_| TelemetryError::BufferOverflow)?;
-                        return Ok(TelemetryUpdate::GpsObservationQueued {
-                            timestamp_s,
-                            queue_depth: self.pending_gps_observations.len(),
-                        });
-                    }
-                }
-                _ => {}
+            if let Some(update) = self.handle_message(header, message)? {
+                return Ok(update);
             }
         }
+    }
+
+    pub fn try_recv_next(&mut self) -> Result<Option<TelemetryUpdate>, TelemetryError> {
+        let (header, message) = match self.connection.try_recv() {
+            Ok(message) => message,
+            Err(MessageReadError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                return Ok(None);
+            }
+            Err(error) => return Err(TelemetryError::MavlinkReadError(error)),
+        };
+
+        self.handle_message(header, message)
     }
 
     pub fn try_dequeue_synchronized_gps(
@@ -254,6 +280,10 @@ impl MavlinkSubscriber {
         }))
     }
 
+    pub fn try_dequeue_pending_gps(&mut self) -> Option<PendingGpsSample> {
+        self.pending_gps_observations.dequeue()
+    }
+
     fn parse_highres_imu(&mut self, message: HIGHRES_IMU_DATA) -> ImuSample {
         let timestamp_s = self.time_normalizer.normalize_time_usec(message.time_usec);
         self.latest_auxiliary_observations =
@@ -266,6 +296,51 @@ impl MavlinkSubscriber {
         ImuSample::new(timestamp_s, accel_body_mps2, gyro_body_rps)
     }
 
+    fn handle_message(
+        &mut self,
+        header: MavHeader,
+        message: MavMessage,
+    ) -> Result<Option<TelemetryUpdate>, TelemetryError> {
+        match message {
+            MavMessage::HIGHRES_IMU(data) => {
+                let raw_frame = encode_mavlink_frame(header, &MavMessage::HIGHRES_IMU(data.clone()))
+                    .map_err(TelemetryError::FrameEncodingError)?;
+                let imu_sample = self.parse_highres_imu(data);
+                Ok(Some(TelemetryUpdate::Imu {
+                    sample: imu_sample,
+                    raw_frame,
+                }))
+            }
+            MavMessage::GPS_RAW_INT(data) => {
+                let mut raw_frame = encode_mavlink_frame(header, &MavMessage::GPS_RAW_INT(data.clone()))
+                    .map_err(TelemetryError::FrameEncodingError)?;
+                self.update_gps_quality(data);
+                purge_frame_buffer(&mut raw_frame);
+                Ok(None)
+            }
+            MavMessage::GLOBAL_POSITION_INT(data) => {
+                let raw_frame = encode_mavlink_frame(
+                    header,
+                    &MavMessage::GLOBAL_POSITION_INT(data.clone()),
+                )
+                .map_err(TelemetryError::FrameEncodingError)?;
+                if let Some(pending_observation) = self.try_build_gps_observation(data, raw_frame)? {
+                    let timestamp_s = pending_observation.gps_observation.timestamp_s;
+                    self.pending_gps_observations
+                        .enqueue(pending_observation)
+                        .map_err(|_| TelemetryError::BufferOverflow)?;
+                    Ok(Some(TelemetryUpdate::GpsObservationQueued {
+                        timestamp_s,
+                        queue_depth: self.pending_gps_observations.len(),
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn update_gps_quality(&mut self, message: GPS_RAW_INT_DATA) {
         let time_seconds = self.time_normalizer.peek_time_usec(message.time_usec);
         self.latest_gps_quality = Some(GpsQualityMetrics::from_message(message, time_seconds));
@@ -275,7 +350,7 @@ impl MavlinkSubscriber {
         &mut self,
         message: GLOBAL_POSITION_INT_DATA,
         raw_frame: MavlinkFrameBuffer,
-    ) -> Result<Option<PendingGpsObservation>, TelemetryError> {
+    ) -> Result<Option<PendingGpsSample>, TelemetryError> {
         let gps_quality = match self.latest_gps_quality {
             Some(gps_quality) if gps_quality.has_valid_position_fix() => gps_quality,
             _ => return Ok(None),
@@ -334,7 +409,7 @@ impl MavlinkSubscriber {
             .absolute_timestamp_ns
             .unwrap_or_else(|| u64::from(message.time_boot_ms) * 1_000_000);
 
-        Ok(Some(PendingGpsObservation {
+        Ok(Some(PendingGpsSample {
             timestamp_ns,
             gps_observation,
             barometer_observation: self.latest_auxiliary_observations.barometer_observation,
@@ -571,6 +646,7 @@ impl TimestampNormalizer {
 pub enum TelemetryError {
     ConnectionError(std::io::Error),
     MavlinkReadError(MessageReadError),
+    MavlinkWriteError(MessageWriteError),
     FrameEncodingError(MessageWriteError),
     InvalidUnitScaling(ConversionError),
     BufferOverflow,
@@ -586,6 +662,9 @@ impl fmt::Display for TelemetryError {
         match self {
             Self::ConnectionError(error) => write!(f, "failed to open MAVLink connection: {error}"),
             Self::MavlinkReadError(error) => write!(f, "failed to read MAVLink frame: {error}"),
+            Self::MavlinkWriteError(error) => {
+                write!(f, "failed to send MAVLink handshake or stream request: {error}")
+            }
             Self::FrameEncodingError(error) => {
                 write!(f, "failed to encode MAVLink frame bytes for evidence hashing: {error}")
             }
@@ -618,6 +697,14 @@ impl fmt::Display for TelemetryError {
 pub fn purge_frame_buffer(frame: &mut MavlinkFrameBuffer) {
     frame.as_mut_slice().fill(0);
     frame.clear();
+}
+
+fn outbound_header() -> MavHeader {
+    MavHeader {
+        sequence: 0,
+        system_id: DEFAULT_GCS_SYSTEM_ID,
+        component_id: DEFAULT_GCS_COMPONENT_ID,
+    }
 }
 
 fn encode_mavlink_frame(

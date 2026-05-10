@@ -13,3 +13,6 @@ pub mod orchestrator;
 
 #[cfg(all(feature = "validation", feature = "std"))]
 pub mod validation;
+
+#[cfg(all(feature = "validation", feature = "std"))]
+pub mod benchmark;

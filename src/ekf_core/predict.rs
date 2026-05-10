@@ -42,6 +42,11 @@ pub fn predict_in_place(
     config: &PredictConfig,
     imu_sample: &ImuSample,
 ) -> Result<(), PredictError> {
+    if state.nominal.timestamp_s <= f64::EPSILON && imu_sample.timestamp_s > f64::EPSILON {
+        state.nominal.timestamp_s = imu_sample.timestamp_s;
+        return Ok(());
+    }
+
     let dt_s = compute_dt_seconds(state.nominal.timestamp_s, imu_sample.timestamp_s)?;
     if dt_s > config.max_propagation_dt_s {
         return Err(PredictError::PropagationStepTooLarge {
@@ -218,5 +223,37 @@ mod tests {
         assert!(state.nominal.velocity_ned_mps.norm() < 1.0e-5);
         assert!(state.nominal.attitude_body_to_ned.angle() < 1.0e-6);
         assert!(state.covariance.trace() > 0.0);
+    }
+
+    #[test]
+    fn first_nonzero_timestamp_bootstraps_without_large_dt_error() {
+        let imu_noise = ImuNoiseModel::new(
+            Vector3::new(0.05, 0.05, 0.05),
+            Vector3::new(0.002, 0.002, 0.002),
+            Vector3::new(0.0002, 0.0002, 0.0002),
+            Vector3::new(0.00002, 0.00002, 0.00002),
+        );
+        let config = PredictConfig::new(Vector3::new(0.0, 0.0, 9.80665), 0.02, imu_noise);
+        let nominal = NominalState {
+            timestamp_s: 0.0,
+            position_ned_m: Vector3::zeros(),
+            velocity_ned_mps: Vector3::zeros(),
+            attitude_body_to_ned: UnitQuaternion::identity(),
+            accel_bias_mps2: Vector3::zeros(),
+            gyro_bias_rps: Vector3::zeros(),
+            geodetic_reference: None,
+        };
+        let mut state = EskfState::new(nominal, super::StateCovariance::identity() * 1.0e-4);
+        let sample = ImuSample::new(
+            3.18,
+            Vector3::new(0.0, 0.0, -9.80665),
+            Vector3::zeros(),
+        );
+
+        predict_in_place(&mut state, &config, &sample).unwrap();
+
+        assert!((state.nominal.timestamp_s - 3.18).abs() < 1.0e-9);
+        assert!(state.nominal.position_ned_m.norm() < 1.0e-6);
+        assert!(state.nominal.velocity_ned_mps.norm() < 1.0e-6);
     }
 }

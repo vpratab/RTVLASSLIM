@@ -44,6 +44,25 @@ impl TelemetrySource for MavlinkSubscriber {
     }
 }
 
+impl<T> TelemetrySource for Box<T>
+where
+    T: TelemetrySource + ?Sized,
+{
+    fn recv_next(&mut self) -> Result<TelemetryUpdate, TelemetryError> {
+        (**self).recv_next()
+    }
+
+    fn record_predicted_state(&mut self, state: &EskfState) {
+        (**self).record_predicted_state(state);
+    }
+
+    fn try_dequeue_synchronized_gps(
+        &mut self,
+    ) -> Result<Option<SynchronizedGpsSample>, TelemetryError> {
+        (**self).try_dequeue_synchronized_gps()
+    }
+}
+
 pub trait EvidenceSink {
     fn persist(&mut self, signed_evidence: &SignedEvidencePacket) -> Result<(), EvidenceSinkError>;
 }
