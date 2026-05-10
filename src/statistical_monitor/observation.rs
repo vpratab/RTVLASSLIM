@@ -1,14 +1,18 @@
 use nalgebra::{SMatrix, SVector, Vector3};
 
-use crate::ekf_core::state::{ERROR_STATE_DIM, POS_IDX, VEL_IDX};
+use crate::ekf_core::state::{ATT_IDX, ERROR_STATE_DIM, POS_IDX, VEL_IDX};
 
 pub const GPS_OBSERVATION_DIM: usize = 6;
+pub const BAROMETER_OBSERVATION_DIM: usize = 1;
+pub const HEADING_OBSERVATION_DIM: usize = 1;
 
 pub type ObservationVector = SVector<f32, GPS_OBSERVATION_DIM>;
 pub type ObservationNoiseMatrix = SMatrix<f32, GPS_OBSERVATION_DIM, GPS_OBSERVATION_DIM>;
 pub type ObservationJacobian = SMatrix<f32, GPS_OBSERVATION_DIM, ERROR_STATE_DIM>;
 pub type InnovationVector = ObservationVector;
 pub type InnovationCovariance = ObservationNoiseMatrix;
+pub type ScalarObservationNoiseMatrix = SMatrix<f32, 1, 1>;
+pub type ScalarObservationJacobian = SMatrix<f32, 1, ERROR_STATE_DIM>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GpsObservation {
@@ -93,6 +97,60 @@ impl GpsObservation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BarometerObservation {
+    pub timestamp_s: f64,
+    pub altitude_ned_down_m: f32,
+    pub altitude_std_m: f32,
+}
+
+impl BarometerObservation {
+    pub const fn new(timestamp_s: f64, altitude_ned_down_m: f32, altitude_std_m: f32) -> Self {
+        Self {
+            timestamp_s,
+            altitude_ned_down_m,
+            altitude_std_m,
+        }
+    }
+
+    pub fn observation_noise(&self) -> ScalarObservationNoiseMatrix {
+        ScalarObservationNoiseMatrix::from_element(self.altitude_std_m * self.altitude_std_m)
+    }
+
+    pub fn observation_matrix() -> ScalarObservationJacobian {
+        let mut observation_matrix = ScalarObservationJacobian::zeros();
+        observation_matrix[(0, POS_IDX + 2)] = 1.0;
+        observation_matrix
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeadingObservation {
+    pub timestamp_s: f64,
+    pub heading_rad: f32,
+    pub heading_std_rad: f32,
+}
+
+impl HeadingObservation {
+    pub const fn new(timestamp_s: f64, heading_rad: f32, heading_std_rad: f32) -> Self {
+        Self {
+            timestamp_s,
+            heading_rad,
+            heading_std_rad,
+        }
+    }
+
+    pub fn observation_noise(&self) -> ScalarObservationNoiseMatrix {
+        ScalarObservationNoiseMatrix::from_element(self.heading_std_rad * self.heading_std_rad)
+    }
+
+    pub fn observation_matrix() -> ScalarObservationJacobian {
+        let mut observation_matrix = ScalarObservationJacobian::zeros();
+        observation_matrix[(0, ATT_IDX + 2)] = 1.0;
+        observation_matrix
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChiSquareThresholdConfig {
     pub flagged_risk_threshold: f32,
     pub rejected_risk_threshold: f32,
@@ -117,7 +175,12 @@ pub enum TrustLevel {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MonitorVerdict {
     pub squared_mahalanobis_distance: f32,
+    pub gps_squared_mahalanobis_distance: f32,
+    pub barometer_squared_mahalanobis_distance: Option<f32>,
+    pub heading_squared_mahalanobis_distance: Option<f32>,
     pub accumulated_risk: f32,
     pub innovation: InnovationVector,
+    pub barometer_residual_m: Option<f32>,
+    pub heading_residual_rad: Option<f32>,
     pub trust_level: TrustLevel,
 }

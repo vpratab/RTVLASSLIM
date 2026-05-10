@@ -10,3 +10,6 @@ pub mod attestation;
 
 #[cfg(all(feature = "telemetry", feature = "attestation", feature = "std"))]
 pub mod orchestrator;
+
+#[cfg(all(feature = "validation", feature = "std"))]
+pub mod validation;

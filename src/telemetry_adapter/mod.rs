@@ -11,7 +11,7 @@ pub use conversions::{
 
 #[cfg(feature = "telemetry")]
 pub use mavlink_handler::{
-    DEFAULT_MAVLINK_UDP_ADDRESS, GpsNoiseModel, MAX_MAVLINK_FRAME_BYTES, MavlinkFrameBuffer,
-    MavlinkSubscriber, MavlinkSubscriberConfig, SynchronizedGpsSample, TelemetryError,
-    TelemetryUpdate, purge_frame_buffer,
+    AuxiliaryObservationConfig, DEFAULT_MAVLINK_UDP_ADDRESS, GpsNoiseModel,
+    MAX_MAVLINK_FRAME_BYTES, MavlinkFrameBuffer, MavlinkSubscriber, MavlinkSubscriberConfig,
+    SynchronizedGpsSample, TelemetryError, TelemetryUpdate, purge_frame_buffer,
 };

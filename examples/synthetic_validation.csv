@@ -1,0 +1,4 @@
+timestamp_s,imu_ax_mps2,imu_ay_mps2,imu_az_mps2,imu_gx_rps,imu_gy_rps,imu_gz_rps,gps_px_ned_m,gps_py_ned_m,gps_pz_ned_m,gps_vx_ned_mps,gps_vy_ned_mps,gps_vz_ned_mps,gps_horizontal_position_std_m,gps_vertical_position_std_m,gps_horizontal_velocity_std_mps,gps_vertical_velocity_std_mps,barometer_altitude_ned_down_m,barometer_std_m,heading_rad,heading_std_rad,label_spoofed
+0.01,0.0,0.0,-9.80665,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.5,2.0,0.3,0.5,0.0,0.8,0.0,0.08,false
+0.02,0.0,0.0,-9.80665,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.5,2.0,0.3,0.5,0.0,0.8,0.0,0.08,false
+0.03,0.0,0.0,-9.80665,0.0,0.0,0.0,125.0,-70.0,20.0,15.0,-7.0,2.0,1.5,2.0,0.3,0.5,0.0,0.8,1.0,0.08,true

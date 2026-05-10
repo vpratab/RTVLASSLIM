@@ -12,7 +12,7 @@ use nalgebra::Vector3;
 
 use crate::{
     ekf_core::state::{EskfState, ImuSample},
-    statistical_monitor::observation::GpsObservation,
+    statistical_monitor::observation::{BarometerObservation, GpsObservation, HeadingObservation},
     telemetry_adapter::conversions::{
         ConversionError, GeodeticPosition, HomePosition,
         centimetres_per_second_to_metres_per_second, geodetic_to_ned, microseconds_to_seconds,
@@ -56,14 +56,31 @@ impl Default for GpsNoiseModel {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuxiliaryObservationConfig {
+    pub barometer_altitude_std_m: f32,
+    pub heading_std_rad: f32,
+}
+
+impl Default for AuxiliaryObservationConfig {
+    fn default() -> Self {
+        Self {
+            barometer_altitude_std_m: 1.5,
+            heading_std_rad: 0.12,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MavlinkSubscriberConfig {
     pub gps_noise_model: GpsNoiseModel,
+    pub auxiliary_observation_config: AuxiliaryObservationConfig,
 }
 
 impl Default for MavlinkSubscriberConfig {
     fn default() -> Self {
         Self {
             gps_noise_model: GpsNoiseModel::default(),
+            auxiliary_observation_config: AuxiliaryObservationConfig::default(),
         }
     }
 }
@@ -84,6 +101,8 @@ pub enum TelemetryUpdate {
 pub struct SynchronizedGpsSample {
     pub timestamp_ns: u64,
     pub gps_observation: GpsObservation,
+    pub barometer_observation: Option<BarometerObservation>,
+    pub heading_observation: Option<HeadingObservation>,
     pub aligned_predicted_state: EskfState,
     pub raw_frame: MavlinkFrameBuffer,
 }
@@ -92,7 +111,15 @@ pub struct SynchronizedGpsSample {
 struct PendingGpsObservation {
     timestamp_ns: u64,
     gps_observation: GpsObservation,
+    barometer_observation: Option<BarometerObservation>,
+    heading_observation: Option<HeadingObservation>,
     raw_frame: MavlinkFrameBuffer,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct AuxiliaryObservations {
+    barometer_observation: Option<BarometerObservation>,
+    heading_observation: Option<HeadingObservation>,
 }
 
 pub struct MavlinkSubscriber {
@@ -101,6 +128,8 @@ pub struct MavlinkSubscriber {
     time_normalizer: TimestampNormalizer,
     home_position: Option<HomePosition>,
     latest_gps_quality: Option<GpsQualityMetrics>,
+    latest_auxiliary_observations: AuxiliaryObservations,
+    home_pressure_altitude_m: Option<f32>,
     pending_gps_observations: Queue<PendingGpsObservation, GPS_QUEUE_CAPACITY>,
     state_history: Deque<EskfState, STATE_HISTORY_CAPACITY>,
 }
@@ -126,6 +155,8 @@ impl MavlinkSubscriber {
             time_normalizer: TimestampNormalizer::default(),
             home_position: None,
             latest_gps_quality: None,
+            latest_auxiliary_observations: AuxiliaryObservations::default(),
+            home_pressure_altitude_m: None,
             pending_gps_observations: Queue::new(),
             state_history: Deque::new(),
         })
@@ -216,6 +247,8 @@ impl MavlinkSubscriber {
         Ok(Some(SynchronizedGpsSample {
             timestamp_ns: pending_gps_observation.timestamp_ns,
             gps_observation: pending_gps_observation.gps_observation,
+            barometer_observation: pending_gps_observation.barometer_observation,
+            heading_observation: pending_gps_observation.heading_observation,
             aligned_predicted_state: aligned_state,
             raw_frame: pending_gps_observation.raw_frame,
         }))
@@ -223,6 +256,8 @@ impl MavlinkSubscriber {
 
     fn parse_highres_imu(&mut self, message: HIGHRES_IMU_DATA) -> ImuSample {
         let timestamp_s = self.time_normalizer.normalize_time_usec(message.time_usec);
+        self.latest_auxiliary_observations =
+            self.extract_auxiliary_observations(timestamp_s, &message);
         // PX4 SITL publishes HIGHRES_IMU in the FRD body convention, which matches the
         // EKF's body axes for a NED navigation frame.
         let accel_body_mps2 = Vector3::new(message.xacc, message.yacc, message.zacc);
@@ -302,8 +337,34 @@ impl MavlinkSubscriber {
         Ok(Some(PendingGpsObservation {
             timestamp_ns,
             gps_observation,
+            barometer_observation: self.latest_auxiliary_observations.barometer_observation,
+            heading_observation: self.latest_auxiliary_observations.heading_observation,
             raw_frame,
         }))
+    }
+
+    fn extract_auxiliary_observations(
+        &mut self,
+        timestamp_s: f64,
+        message: &HIGHRES_IMU_DATA,
+    ) -> AuxiliaryObservations {
+        let barometer_observation = extract_barometer_observation(
+            timestamp_s,
+            message.pressure_alt,
+            &mut self.home_pressure_altitude_m,
+            self.config.auxiliary_observation_config,
+        );
+        let heading_observation = extract_heading_observation(
+            timestamp_s,
+            Vector3::new(message.xacc, message.yacc, message.zacc),
+            Vector3::new(message.xmag, message.ymag, message.zmag),
+            self.config.auxiliary_observation_config,
+        );
+
+        AuxiliaryObservations {
+            barometer_observation,
+            heading_observation,
+        }
     }
 
     fn interpolate_state_at(
@@ -620,11 +681,97 @@ fn lerp_vector3(start: Vector3<f32>, end: Vector3<f32>, interpolation_factor: f3
     start * (1.0 - interpolation_factor) + end * interpolation_factor
 }
 
+fn extract_barometer_observation(
+    timestamp_s: f64,
+    pressure_altitude_m: f32,
+    home_pressure_altitude_m: &mut Option<f32>,
+    config: AuxiliaryObservationConfig,
+) -> Option<BarometerObservation> {
+    if !pressure_altitude_m.is_finite() {
+        return None;
+    }
+
+    let home_pressure_altitude_m = *home_pressure_altitude_m.get_or_insert(pressure_altitude_m);
+    let relative_altitude_up_m = pressure_altitude_m - home_pressure_altitude_m;
+    Some(BarometerObservation::new(
+        timestamp_s,
+        -relative_altitude_up_m,
+        config.barometer_altitude_std_m,
+    ))
+}
+
+fn extract_heading_observation(
+    timestamp_s: f64,
+    specific_force_body_mps2: Vector3<f32>,
+    magnetic_field_body: Vector3<f32>,
+    config: AuxiliaryObservationConfig,
+) -> Option<HeadingObservation> {
+    let heading_rad =
+        tilt_compensated_heading_rad(specific_force_body_mps2, magnetic_field_body)?;
+    Some(HeadingObservation::new(
+        timestamp_s,
+        heading_rad,
+        config.heading_std_rad,
+    ))
+}
+
+fn tilt_compensated_heading_rad(
+    specific_force_body_mps2: Vector3<f32>,
+    magnetic_field_body: Vector3<f32>,
+) -> Option<f32> {
+    if magnetic_field_body.norm_squared() <= 1.0e-8
+        || specific_force_body_mps2.norm_squared() <= 1.0e-8
+    {
+        return None;
+    }
+
+    let gravity_body = -specific_force_body_mps2.normalize();
+    let roll_rad = gravity_body.y.atan2(gravity_body.z);
+    let pitch_rad = (-gravity_body.x)
+        .atan2((gravity_body.y * gravity_body.y + gravity_body.z * gravity_body.z).sqrt());
+
+    let sin_roll = roll_rad.sin();
+    let cos_roll = roll_rad.cos();
+    let sin_pitch = pitch_rad.sin();
+    let cos_pitch = pitch_rad.cos();
+
+    let magnetic_xh = magnetic_field_body.x * cos_pitch + magnetic_field_body.z * sin_pitch;
+    let magnetic_yh = magnetic_field_body.x * sin_roll * sin_pitch
+        + magnetic_field_body.y * cos_roll
+        - magnetic_field_body.z * sin_roll * cos_pitch;
+    if magnetic_xh.abs() <= 1.0e-8 && magnetic_yh.abs() <= 1.0e-8 {
+        return None;
+    }
+
+    Some(wrap_angle_pi(magnetic_yh.atan2(magnetic_xh)))
+}
+
+fn wrap_angle_pi(mut angle_rad: f32) -> f32 {
+    const TWO_PI: f32 = core::f32::consts::PI * 2.0;
+    while angle_rad > core::f32::consts::PI {
+        angle_rad -= TWO_PI;
+    }
+    while angle_rad < -core::f32::consts::PI {
+        angle_rad += TWO_PI;
+    }
+    angle_rad
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{thread, time::Duration};
+
+    use mavlink::{
+        MavConnection,
+        dialects::common::{GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, HIGHRES_IMU_DATA, MavMessage},
+    };
     use nalgebra::{UnitQuaternion, Vector3};
 
-    use super::{GpsNoiseModel, GpsQualityMetrics, interpolate_eskf_state};
+    use super::{
+        AuxiliaryObservationConfig, GpsNoiseModel, GpsQualityMetrics,
+        MavlinkSubscriber, MavlinkSubscriberConfig, TelemetryUpdate, extract_barometer_observation,
+        extract_heading_observation, interpolate_eskf_state,
+    };
     use crate::ekf_core::state::{EskfState, NominalState, StateCovariance};
     use mavlink::dialects::common::GpsFixType;
 
@@ -685,5 +832,114 @@ mod tests {
         assert!(vpos >= 15.0);
         assert!(hvel > 2.0);
         assert!(vvel > 3.0);
+    }
+
+    #[test]
+    fn barometer_observation_is_relative_to_home_altitude() {
+        let mut home_pressure_altitude_m = None;
+        let config = AuxiliaryObservationConfig::default();
+
+        let first =
+            extract_barometer_observation(1.0, 120.0, &mut home_pressure_altitude_m, config)
+                .unwrap();
+        let second =
+            extract_barometer_observation(2.0, 123.5, &mut home_pressure_altitude_m, config)
+                .unwrap();
+
+        assert!(first.altitude_ned_down_m.abs() < 1.0e-6);
+        assert!((second.altitude_ned_down_m + 3.5).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn heading_observation_uses_accel_and_magnetometer() {
+        let config = AuxiliaryObservationConfig::default();
+        let heading = extract_heading_observation(
+            1.0,
+            Vector3::new(0.0, 0.0, -9.80665),
+            Vector3::new(1.0, 0.0, 0.0),
+            config,
+        )
+        .unwrap();
+
+        assert!(heading.heading_rad.abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn udp_loopback_ingests_auxiliary_and_gps_observations() {
+        let mut subscriber = MavlinkSubscriber::with_config(
+            "udpin:0.0.0.0:14557",
+            MavlinkSubscriberConfig::default(),
+        )
+        .unwrap();
+
+        thread::spawn(|| {
+            thread::sleep(Duration::from_millis(100));
+            let client =
+                mavlink::connect::<MavMessage>("udpout:127.0.0.1:14557").expect("udp client");
+
+            let imu_message = MavMessage::HIGHRES_IMU(HIGHRES_IMU_DATA {
+                time_usec: 10_000,
+                xacc: 0.0,
+                yacc: 0.0,
+                zacc: -9.80665,
+                xmag: 1.0,
+                ymag: 0.0,
+                zmag: 0.0,
+                pressure_alt: 120.0,
+                ..HIGHRES_IMU_DATA::DEFAULT
+            });
+            let gps_quality_message = MavMessage::GPS_RAW_INT(GPS_RAW_INT_DATA {
+                time_usec: 10_000,
+                eph: 150,
+                epv: 200,
+                fix_type: GpsFixType::GPS_FIX_TYPE_3D_FIX,
+                satellites_visible: 10,
+                ..GPS_RAW_INT_DATA::DEFAULT
+            });
+            let gps_message = MavMessage::GLOBAL_POSITION_INT(GLOBAL_POSITION_INT_DATA {
+                time_boot_ms: 10,
+                hdg: 0,
+                ..GLOBAL_POSITION_INT_DATA::DEFAULT
+            });
+
+            client.send_default(&imu_message).unwrap();
+            client.send_default(&gps_quality_message).unwrap();
+            client.send_default(&gps_message).unwrap();
+        });
+
+        let imu_update = subscriber.recv_next().unwrap();
+        match imu_update {
+            TelemetryUpdate::Imu { sample, .. } => {
+                assert!((sample.timestamp_s - 0.01).abs() < 1.0e-6);
+            }
+            other => panic!("expected IMU update, got {other:?}"),
+        }
+
+        subscriber.record_predicted_state(&EskfState::new(
+            NominalState {
+                timestamp_s: 0.01,
+                position_ned_m: Vector3::zeros(),
+                velocity_ned_mps: Vector3::zeros(),
+                attitude_body_to_ned: UnitQuaternion::identity(),
+                accel_bias_mps2: Vector3::zeros(),
+                gyro_bias_rps: Vector3::zeros(),
+                geodetic_reference: None,
+            },
+            StateCovariance::identity(),
+        ));
+
+        let gps_update = subscriber.recv_next().unwrap();
+        match gps_update {
+            TelemetryUpdate::GpsObservationQueued { queue_depth, .. } => {
+                assert_eq!(queue_depth, 1);
+            }
+            other => panic!("expected GPS queue update, got {other:?}"),
+        }
+
+        let synchronized = subscriber.try_dequeue_synchronized_gps().unwrap().unwrap();
+        assert!(synchronized.barometer_observation.is_some());
+        assert!(synchronized.heading_observation.is_some());
+        assert!(!synchronized.raw_frame.is_empty());
+        assert!((synchronized.gps_observation.timestamp_s - 0.01).abs() < 1.0e-6);
     }
 }

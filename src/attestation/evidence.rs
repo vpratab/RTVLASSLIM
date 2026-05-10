@@ -344,12 +344,21 @@ mod tests {
             } else {
                 50.0
             },
+            gps_squared_mahalanobis_distance: if matches!(trust_level, TrustLevel::Trusted) {
+                2.0
+            } else {
+                50.0
+            },
+            barometer_squared_mahalanobis_distance: None,
+            heading_squared_mahalanobis_distance: None,
             accumulated_risk: if matches!(trust_level, TrustLevel::Trusted) {
                 1.5
             } else {
                 30.0
             },
             innovation: ObservationVector::zeros(),
+            barometer_residual_m: None,
+            heading_residual_rad: None,
             trust_level,
         };
 

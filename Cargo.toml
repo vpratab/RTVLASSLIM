@@ -7,7 +7,7 @@ rust-version = "1.87"
 description = "Real-Time Physics Verification Layer for Autonomous Systems."
 
 [features]
-default = ["std", "telemetry", "attestation"]
+default = ["std", "telemetry", "attestation", "validation"]
 std = [
     "dep:mavlink",
     "nalgebra/std",
@@ -17,8 +17,10 @@ std = [
 ]
 telemetry = ["std", "mavlink/std"]
 attestation = ["dep:postcard"]
+validation = ["std", "dep:csv"]
 
 [dependencies]
+csv = { version = "1.4.0", optional = true }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["fast", "zeroize"] }
 heapless = "0.9.3"
 libm = { version = "0.2.16", default-features = false }

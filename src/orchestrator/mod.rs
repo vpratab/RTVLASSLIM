@@ -244,9 +244,11 @@ where
         let result = (|| {
             let monitor_verdict = self
                 .statistical_monitor
-                .evaluate_gps_observation(
+                .evaluate_observations(
                     &synchronized_gps_sample.aligned_predicted_state,
                     &synchronized_gps_sample.gps_observation,
+                    synchronized_gps_sample.barometer_observation.as_ref(),
+                    synchronized_gps_sample.heading_observation.as_ref(),
                 )
                 .map_err(OrchestratorError::Monitor)?;
             let trust_level = monitor_verdict.trust_level;
@@ -476,6 +478,8 @@ mod tests {
                 0.4,
                 0.5,
             ),
+            barometer_observation: None,
+            heading_observation: None,
             aligned_predicted_state: EskfState::default(),
             raw_frame: gps_frame,
         };
@@ -565,6 +569,8 @@ mod tests {
                 0.2,
                 0.2,
             ),
+            barometer_observation: None,
+            heading_observation: None,
             aligned_predicted_state: predicted_state,
             raw_frame: {
                 let mut frame = HeaplessVec::new();
@@ -574,8 +580,13 @@ mod tests {
         };
         let verdict = crate::statistical_monitor::observation::MonitorVerdict {
             squared_mahalanobis_distance: 0.5,
+            gps_squared_mahalanobis_distance: 0.5,
+            barometer_squared_mahalanobis_distance: None,
+            heading_squared_mahalanobis_distance: None,
             accumulated_risk: 0.5,
             innovation: crate::statistical_monitor::observation::ObservationVector::zeros(),
+            barometer_residual_m: None,
+            heading_residual_rad: None,
             trust_level: TrustLevel::Trusted,
         };
         let evidence = EvidencePacket::from_synchronized_sample(
