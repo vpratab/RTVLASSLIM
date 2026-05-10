@@ -1,0 +1,29 @@
+[package]
+name = "rtvlas"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+description = "Real-Time Physics Verification Layer for Autonomous Systems."
+
+[features]
+default = ["std", "telemetry", "attestation"]
+std = [
+    "dep:mavlink",
+    "nalgebra/std",
+    "serde/std",
+    "sha2/std",
+    "ed25519-dalek/std",
+]
+telemetry = ["std", "mavlink/std"]
+attestation = ["dep:postcard"]
+
+[dependencies]
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["fast", "zeroize"] }
+heapless = "0.9.3"
+libm = { version = "0.2.16", default-features = false }
+mavlink = { version = "0.18.0", default-features = false, features = ["serde", "dialect-common", "format-generated-code", "transport-udp"], optional = true }
+nalgebra = { version = "0.34.2", default-features = false, features = ["libm", "serde-serialize-no-std"] }
+postcard = { version = "1.1.3", default-features = false, optional = true }
+serde = { version = "1.0.228", default-features = false, features = ["derive"] }
+sha2 = { version = "0.10.9", default-features = false }
