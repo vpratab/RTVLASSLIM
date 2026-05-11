@@ -24,8 +24,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let connection = argument_value("--connection")
-        .unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
+    let connection =
+        argument_value("--connection").unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
     let skip_handshake = flag_present("--skip-handshake");
     let verdict_limit = argument_value("--verdict-limit")
         .map(|value| value.parse::<u64>().map_err(|error| error.to_string()))
@@ -112,7 +112,10 @@ fn run() -> Result<(), String> {
 
     let report = orchestrator.mission_report();
     println!("Mission report:");
-    println!("  total packets processed: {}", report.total_packets_processed);
+    println!(
+        "  total packets processed: {}",
+        report.total_packets_processed
+    );
     println!("  imu packets processed: {}", report.imu_packets_processed);
     println!("  gps packets processed: {}", report.gps_packets_processed);
     println!("  verdicts emitted: {}", report.verdicts_emitted);
@@ -120,7 +123,10 @@ fn run() -> Result<(), String> {
         "  trusted/flagged/rejected: {}/{}/{}",
         report.trusted_verdicts, report.flagged_verdicts, report.rejected_verdicts
     );
-    println!("  rejected percentage: {:.2}%", report.rejected_percentage());
+    println!(
+        "  rejected percentage: {:.2}%",
+        report.rejected_percentage()
+    );
     let _ = std::io::stdout().flush();
 
     Ok(())

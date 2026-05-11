@@ -4,9 +4,8 @@ use heapless::{Deque, Vec, spsc::Queue};
 use mavlink::{
     MavConnection, MavHeader, MessageData, connect,
     dialects::common::{
-        COMMAND_LONG_DATA, GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, GpsFixType,
-        HEARTBEAT_DATA, HIGHRES_IMU_DATA, MavAutopilot, MavCmd, MavModeFlag, MavMessage,
-        MavState, MavType,
+        COMMAND_LONG_DATA, GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, GpsFixType, HEARTBEAT_DATA,
+        HIGHRES_IMU_DATA, MavAutopilot, MavCmd, MavMessage, MavModeFlag, MavState, MavType,
     },
     error::{MessageReadError, MessageWriteError},
 };
@@ -195,7 +194,10 @@ impl MavlinkSubscriber {
         let header = outbound_header();
         for (message_id, interval_us) in [
             (HIGHRES_IMU_DATA::ID, HIGHRES_IMU_INTERVAL_US),
-            (GLOBAL_POSITION_INT_DATA::ID, GLOBAL_POSITION_INT_INTERVAL_US),
+            (
+                GLOBAL_POSITION_INT_DATA::ID,
+                GLOBAL_POSITION_INT_INTERVAL_US,
+            ),
             (GPS_RAW_INT_DATA::ID, GPS_RAW_INT_INTERVAL_US),
         ] {
             let command = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
@@ -260,10 +262,11 @@ impl MavlinkSubscriber {
             return Ok(None);
         };
 
-        let aligned_state = match self.interpolate_state_at(oldest_observation.gps_observation.timestamp_s)? {
-            Some(aligned_state) => aligned_state,
-            None => return Ok(None),
-        };
+        let aligned_state =
+            match self.interpolate_state_at(oldest_observation.gps_observation.timestamp_s)? {
+                Some(aligned_state) => aligned_state,
+                None => return Ok(None),
+            };
 
         let pending_gps_observation = self
             .pending_gps_observations
@@ -303,8 +306,9 @@ impl MavlinkSubscriber {
     ) -> Result<Option<TelemetryUpdate>, TelemetryError> {
         match message {
             MavMessage::HIGHRES_IMU(data) => {
-                let raw_frame = encode_mavlink_frame(header, &MavMessage::HIGHRES_IMU(data.clone()))
-                    .map_err(TelemetryError::FrameEncodingError)?;
+                let raw_frame =
+                    encode_mavlink_frame(header, &MavMessage::HIGHRES_IMU(data.clone()))
+                        .map_err(TelemetryError::FrameEncodingError)?;
                 let imu_sample = self.parse_highres_imu(data);
                 Ok(Some(TelemetryUpdate::Imu {
                     sample: imu_sample,
@@ -312,19 +316,20 @@ impl MavlinkSubscriber {
                 }))
             }
             MavMessage::GPS_RAW_INT(data) => {
-                let mut raw_frame = encode_mavlink_frame(header, &MavMessage::GPS_RAW_INT(data.clone()))
-                    .map_err(TelemetryError::FrameEncodingError)?;
+                let mut raw_frame =
+                    encode_mavlink_frame(header, &MavMessage::GPS_RAW_INT(data.clone()))
+                        .map_err(TelemetryError::FrameEncodingError)?;
                 self.update_gps_quality(data);
                 purge_frame_buffer(&mut raw_frame);
                 Ok(None)
             }
             MavMessage::GLOBAL_POSITION_INT(data) => {
-                let raw_frame = encode_mavlink_frame(
-                    header,
-                    &MavMessage::GLOBAL_POSITION_INT(data.clone()),
-                )
-                .map_err(TelemetryError::FrameEncodingError)?;
-                if let Some(pending_observation) = self.try_build_gps_observation(data, raw_frame)? {
+                let raw_frame =
+                    encode_mavlink_frame(header, &MavMessage::GLOBAL_POSITION_INT(data.clone()))
+                        .map_err(TelemetryError::FrameEncodingError)?;
+                if let Some(pending_observation) =
+                    self.try_build_gps_observation(data, raw_frame)?
+                {
                     let timestamp_s = pending_observation.gps_observation.timestamp_s;
                     self.pending_gps_observations
                         .enqueue(pending_observation)
@@ -663,10 +668,16 @@ impl fmt::Display for TelemetryError {
             Self::ConnectionError(error) => write!(f, "failed to open MAVLink connection: {error}"),
             Self::MavlinkReadError(error) => write!(f, "failed to read MAVLink frame: {error}"),
             Self::MavlinkWriteError(error) => {
-                write!(f, "failed to send MAVLink handshake or stream request: {error}")
+                write!(
+                    f,
+                    "failed to send MAVLink handshake or stream request: {error}"
+                )
             }
             Self::FrameEncodingError(error) => {
-                write!(f, "failed to encode MAVLink frame bytes for evidence hashing: {error}")
+                write!(
+                    f,
+                    "failed to encode MAVLink frame bytes for evidence hashing: {error}"
+                )
             }
             Self::InvalidUnitScaling(error) => {
                 write!(
@@ -715,7 +726,8 @@ fn encode_mavlink_frame(
     let mut cursor = std::io::Cursor::new(encoded_bytes.as_mut_slice());
     let frame_length = mavlink::write_v2_msg(&mut cursor, header, message)?;
     let mut frame = MavlinkFrameBuffer::new();
-    frame.extend_from_slice(&encoded_bytes[..frame_length])
+    frame
+        .extend_from_slice(&encoded_bytes[..frame_length])
         .expect("MAVLink frame length must fit within MAX_MAVLINK_FRAME_BYTES");
     Ok(frame)
 }
@@ -793,8 +805,7 @@ fn extract_heading_observation(
     magnetic_field_body: Vector3<f32>,
     config: AuxiliaryObservationConfig,
 ) -> Option<HeadingObservation> {
-    let heading_rad =
-        tilt_compensated_heading_rad(specific_force_body_mps2, magnetic_field_body)?;
+    let heading_rad = tilt_compensated_heading_rad(specific_force_body_mps2, magnetic_field_body)?;
     Some(HeadingObservation::new(
         timestamp_s,
         heading_rad,
@@ -850,13 +861,15 @@ mod tests {
 
     use mavlink::{
         MavConnection,
-        dialects::common::{GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, HIGHRES_IMU_DATA, MavMessage},
+        dialects::common::{
+            GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, HIGHRES_IMU_DATA, MavMessage,
+        },
     };
     use nalgebra::{UnitQuaternion, Vector3};
 
     use super::{
-        AuxiliaryObservationConfig, GpsNoiseModel, GpsQualityMetrics,
-        MavlinkSubscriber, MavlinkSubscriberConfig, TelemetryUpdate, extract_barometer_observation,
+        AuxiliaryObservationConfig, GpsNoiseModel, GpsQualityMetrics, MavlinkSubscriber,
+        MavlinkSubscriberConfig, TelemetryUpdate, extract_barometer_observation,
         extract_heading_observation, interpolate_eskf_state,
     };
     use crate::ekf_core::state::{EskfState, NominalState, StateCovariance};

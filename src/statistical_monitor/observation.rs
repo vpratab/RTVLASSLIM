@@ -175,9 +175,7 @@ impl ClockBiasObservation {
     }
 
     pub fn observation_noise(&self) -> ScalarObservationNoiseMatrix {
-        ScalarObservationNoiseMatrix::from_element(
-            self.clock_bias_std_m * self.clock_bias_std_m,
-        )
+        ScalarObservationNoiseMatrix::from_element(self.clock_bias_std_m * self.clock_bias_std_m)
     }
 }
 

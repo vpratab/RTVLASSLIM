@@ -90,8 +90,8 @@ fn run() -> Result<(), String> {
     for config in scenario_configs {
         let csv_path = texbat_dir.join(format!("{}_replay.csv", config.scenario_name));
         write_texbat_replay_csv(&config, &csv_path).map_err(|error| error.to_string())?;
-        let report =
-            run_texbat_scenario(&config, thresholds, ewma_alpha).map_err(|error| error.to_string())?;
+        let report = run_texbat_scenario(&config, thresholds, ewma_alpha)
+            .map_err(|error| error.to_string())?;
 
         println!("Scenario: {}", report.scenario_name);
         println!("  replay CSV: {}", csv_path.display());

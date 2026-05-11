@@ -244,11 +244,7 @@ mod tests {
             geodetic_reference: None,
         };
         let mut state = EskfState::new(nominal, super::StateCovariance::identity() * 1.0e-4);
-        let sample = ImuSample::new(
-            3.18,
-            Vector3::new(0.0, 0.0, -9.80665),
-            Vector3::zeros(),
-        );
+        let sample = ImuSample::new(3.18, Vector3::new(0.0, 0.0, -9.80665), Vector3::zeros());
 
         predict_in_place(&mut state, &config, &sample).unwrap();
 

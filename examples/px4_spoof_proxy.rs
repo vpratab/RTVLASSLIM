@@ -33,7 +33,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let upstream = argument_value("--upstream").unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
+    let upstream =
+        argument_value("--upstream").unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
     let downstream =
         argument_value("--downstream").unwrap_or_else(|| "udpout:127.0.0.1:18571".to_owned());
     let spoof_onset_s = argument_value("--spoof-onset-s")
@@ -65,7 +66,8 @@ fn run() -> Result<(), String> {
         spoof_config.velocity_offset_ned_mps.z,
     );
 
-    let upstream_connection = connect::<MavMessage>(&upstream).map_err(|error| error.to_string())?;
+    let upstream_connection =
+        connect::<MavMessage>(&upstream).map_err(|error| error.to_string())?;
     let downstream_connection =
         connect::<MavMessage>(&downstream).map_err(|error| error.to_string())?;
 
@@ -80,7 +82,9 @@ fn run() -> Result<(), String> {
     let mut spoof_announced = false;
 
     loop {
-        let (header, message) = upstream_connection.recv().map_err(|error| error.to_string())?;
+        let (header, message) = upstream_connection
+            .recv()
+            .map_err(|error| error.to_string())?;
         let elapsed_s = started_at.elapsed().as_secs_f64();
         let spoof_enabled = elapsed_s >= spoof_onset_s;
 
@@ -183,8 +187,10 @@ fn spoof_global_position(
     data.lat = radians_to_scaled_degrees_e7(spoofed_geodetic_position.latitude_rad)?;
     data.lon = radians_to_scaled_degrees_e7(spoofed_geodetic_position.longitude_rad)?;
     data.alt = metres_to_millimetres_i32(spoofed_geodetic_position.altitude_m)?;
-    data.relative_alt =
-        saturating_add_i32(data.relative_alt, metres_to_millimetres_i32(-spoof_config.position_offset_ned_m.z)?);
+    data.relative_alt = saturating_add_i32(
+        data.relative_alt,
+        metres_to_millimetres_i32(-spoof_config.position_offset_ned_m.z)?,
+    );
     data.vx = saturating_add_i16(
         data.vx,
         metres_per_second_to_centimetres_per_second_i16(spoof_config.velocity_offset_ned_mps.x)?,
@@ -246,7 +252,9 @@ fn metres_to_millimetres_i32(value: f64) -> Result<i32, String> {
 fn metres_per_second_to_centimetres_per_second_i16(value: f32) -> Result<i16, String> {
     let scaled = value * CENTIMETRES_PER_SECOND_PER_METRE_PER_SECOND;
     if !scaled.is_finite() || scaled < f32::from(i16::MIN) || scaled > f32::from(i16::MAX) {
-        return Err("velocity exceeded GLOBAL_POSITION_INT centimetres-per-second range".to_owned());
+        return Err(
+            "velocity exceeded GLOBAL_POSITION_INT centimetres-per-second range".to_owned(),
+        );
     }
 
     Ok(scaled.round() as i16)

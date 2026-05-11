@@ -16,9 +16,7 @@ use crate::{
         monitor::{
             ClockBiasPersistenceConfig, EwmaRiskAccumulator, MonitorError, StatisticalMonitor,
         },
-        observation::{
-            ChiSquareThresholdConfig, ClockBiasObservation, GpsObservation, TrustLevel,
-        },
+        observation::{ChiSquareThresholdConfig, ClockBiasObservation, GpsObservation, TrustLevel},
     },
 };
 
@@ -202,7 +200,10 @@ impl fmt::Display for TexbatError {
                 path.display()
             ),
             Self::EmptyScenario(scenario_name) => {
-                write!(f, "TEXBAT scenario {scenario_name} did not yield any aligned samples")
+                write!(
+                    f,
+                    "TEXBAT scenario {scenario_name} did not yield any aligned samples"
+                )
             }
             Self::Monitor(error) => write!(f, "TEXBAT monitor error: {error}"),
         }
@@ -249,8 +250,7 @@ pub fn scenario_onset_in_file_seconds(
     scenario_offset_from_clean_s: f64,
     spoof_onset_after_scenario_2_start_s: f64,
 ) -> f64 {
-    spoof_onset_after_scenario_2_start_s
-        + TEXBAT_SCENARIO_2_OFFSET_FROM_CLEAN_S
+    spoof_onset_after_scenario_2_start_s + TEXBAT_SCENARIO_2_OFFSET_FROM_CLEAN_S
         - scenario_offset_from_clean_s
 }
 
@@ -318,11 +318,8 @@ fn build_aligned_samples(
         let aligned_timestamp_s = apply_alignment(*observed_timestamp_s, calibration);
         clean_index = nearest_clean_index(&clean.timestamps_s, aligned_timestamp_s, clean_index);
 
-        let reference_position_ned_m = ecef_to_local_ned(
-            &ecef_to_ned,
-            home_ecef,
-            clean.ecef_positions_m[clean_index],
-        );
+        let reference_position_ned_m =
+            ecef_to_local_ned(&ecef_to_ned, home_ecef, clean.ecef_positions_m[clean_index]);
         let observed_position_ned_m = ecef_to_local_ned(
             &ecef_to_ned,
             home_ecef,
@@ -380,8 +377,7 @@ fn evaluate_aligned_samples(
     ewma_alpha: f32,
 ) -> Result<TexbatScenarioReport, TexbatError> {
     let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha));
-    monitor =
-        monitor.with_clock_bias_persistence(ClockBiasPersistenceConfig::new(0.9, 92.0));
+    monitor = monitor.with_clock_bias_persistence(ClockBiasPersistenceConfig::new(0.9, 92.0));
     let mut report = TexbatScenarioReport {
         scenario_name: config.scenario_name.clone(),
         calibrated_alignment_offset_s: aligned_data.calibrated_alignment_offset_s,
@@ -438,14 +434,20 @@ fn evaluate_aligned_samples(
         }
 
         if sample.label_spoofed {
-            if matches!(verdict.trust_level, TrustLevel::Flagged | TrustLevel::Rejected) {
+            if matches!(
+                verdict.trust_level,
+                TrustLevel::Flagged | TrustLevel::Rejected
+            ) {
                 report.anomaly_true_positives += 1;
             }
             if matches!(verdict.trust_level, TrustLevel::Rejected) {
                 report.rejected_true_positives += 1;
             }
         } else {
-            if matches!(verdict.trust_level, TrustLevel::Flagged | TrustLevel::Rejected) {
+            if matches!(
+                verdict.trust_level,
+                TrustLevel::Flagged | TrustLevel::Rejected
+            ) {
                 report.anomaly_false_positives += 1;
             }
             if matches!(verdict.trust_level, TrustLevel::Rejected) {
@@ -580,7 +582,8 @@ fn calibrate_alignment(
     let mut best_offset_s = -config.scenario_offset_from_clean_s;
     let mut best_scale = 1.0;
     let mut best_score = f64::INFINITY;
-    let mut trial_offset_s = -config.scenario_offset_from_clean_s - config.alignment_search_window_s;
+    let mut trial_offset_s =
+        -config.scenario_offset_from_clean_s - config.alignment_search_window_s;
     let max_offset_s = -config.scenario_offset_from_clean_s + config.alignment_search_window_s;
     let step_s = config.alignment_search_step_s.max(0.001);
     let scale_window = config.alignment_scale_search_window.max(0.0);
@@ -640,20 +643,16 @@ fn alignment_score_for_mapping(
         let aligned_timestamp_s = apply_alignment(*observed_timestamp_s, calibration);
         clean_index = nearest_clean_index(&clean.timestamps_s, aligned_timestamp_s, clean_index);
 
-        let reference_position_ned_m = ecef_to_local_ned(
-            &ecef_to_ned,
-            home_ecef,
-            clean.ecef_positions_m[clean_index],
-        );
+        let reference_position_ned_m =
+            ecef_to_local_ned(&ecef_to_ned, home_ecef, clean.ecef_positions_m[clean_index]);
         let observed_position_ned_m = ecef_to_local_ned(
             &ecef_to_ned,
             home_ecef,
             observed.ecef_positions_m[observed_index],
         );
         position_deltas.push(observed_position_ned_m - reference_position_ned_m);
-        clock_bias_deltas.push(
-            observed.clock_bias_m[observed_index] - clean.clock_bias_m[clean_index],
-        );
+        clock_bias_deltas
+            .push(observed.clock_bias_m[observed_index] - clean.clock_bias_m[clean_index]);
     }
 
     if position_deltas.is_empty() {
@@ -689,7 +688,11 @@ fn value_at(data: &[f64], rows: usize, row: usize, column: usize) -> f64 {
     data[row + rows * column]
 }
 
-fn nearest_clean_index(clean_timestamps_s: &[f64], target_timestamp_s: f64, start_index: usize) -> usize {
+fn nearest_clean_index(
+    clean_timestamps_s: &[f64],
+    target_timestamp_s: f64,
+    start_index: usize,
+) -> usize {
     let mut index = start_index.min(clean_timestamps_s.len().saturating_sub(1));
     while index + 1 < clean_timestamps_s.len()
         && clean_timestamps_s[index + 1] <= target_timestamp_s
@@ -763,7 +766,10 @@ fn mean_clock_bias(samples: &[AlignedReplaySample]) -> f32 {
 }
 
 fn samples_for_mean(samples: &[AlignedReplaySample]) -> usize {
-    let clean_count = samples.iter().filter(|sample| !sample.label_spoofed).count();
+    let clean_count = samples
+        .iter()
+        .filter(|sample| !sample.label_spoofed)
+        .count();
     if clean_count == 0 {
         samples.len()
     } else {
@@ -786,7 +792,11 @@ fn ecef_to_lat_lon(ecef_m: Vector3<f64>) -> (f64, f64) {
                 * sin_theta
                 * sin_theta
                 * sin_theta,
-        p - WGS84_ECCENTRICITY_SQUARED * WGS84_SEMI_MAJOR_AXIS_M * cos_theta * cos_theta * cos_theta,
+        p - WGS84_ECCENTRICITY_SQUARED
+            * WGS84_SEMI_MAJOR_AXIS_M
+            * cos_theta
+            * cos_theta
+            * cos_theta,
     );
     let longitude_rad = atan2(ecef_m.y, ecef_m.x);
     (latitude_rad, longitude_rad)
@@ -837,8 +847,7 @@ fn ratio(numerator: u64, denominator: u64) -> f64 {
 mod tests {
     use super::{
         TEXBAT_SCENARIO_3_OFFSET_FROM_CLEAN_S,
-        TEXBAT_SCENARIO_3_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
-        scenario_onset_in_file_seconds,
+        TEXBAT_SCENARIO_3_SPOOF_ONSET_AFTER_SCENARIO_2_START_S, scenario_onset_in_file_seconds,
     };
 
     #[test]

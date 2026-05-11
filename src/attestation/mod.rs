@@ -2,7 +2,7 @@ pub mod evidence;
 
 pub use evidence::{
     AttestationError, AttestationProvider, Ed25519AttestationProvider, EvidencePacket,
-    SecureElement, STATE_SNAPSHOT_LEN, SignedEvidencePacket, deserialize_evidence,
+    STATE_SNAPSHOT_LEN, SecureElement, SignedEvidencePacket, deserialize_evidence,
     serialize_evidence, verify_evidence,
 };
 

@@ -1,9 +1,7 @@
 use core::fmt;
 
 use crate::{
-    attestation::{
-        AttestationError, AttestationProvider, EvidencePacket, SignedEvidencePacket,
-    },
+    attestation::{AttestationError, AttestationProvider, EvidencePacket, SignedEvidencePacket},
     ekf_core::{
         predict::{PredictError, predict_in_place},
         state::{EskfState, PredictConfig},
@@ -127,7 +125,9 @@ where
         self.writer
             .write_all(hex_line.as_bytes())
             .map_err(EvidenceSinkError::Io)?;
-        self.writer.write_all(b"\n").map_err(EvidenceSinkError::Io)?;
+        self.writer
+            .write_all(b"\n")
+            .map_err(EvidenceSinkError::Io)?;
         self.writer.flush().map_err(EvidenceSinkError::Io)
     }
 }
@@ -238,7 +238,8 @@ where
                 let result = (|| {
                     predict_in_place(&mut self.eskf_state, &self.predict_config, &sample)
                         .map_err(OrchestratorError::Predict)?;
-                    self.telemetry_source.record_predicted_state(&self.eskf_state);
+                    self.telemetry_source
+                        .record_predicted_state(&self.eskf_state);
                     self.try_finalize_pending_verdict()
                 })();
                 purge_frame_buffer(&mut raw_frame);
@@ -327,9 +328,7 @@ impl fmt::Display for OrchestratorError {
 pub enum EvidenceSinkError {
     Serialization(postcard::Error),
     Io(std::io::Error),
-    SerializedPacketTooLarge {
-        packet_length: usize,
-    },
+    SerializedPacketTooLarge { packet_length: usize },
     EvidenceRoundTrip(AttestationError),
 }
 
@@ -376,8 +375,7 @@ mod tests {
     use nalgebra::{UnitQuaternion, Vector3};
 
     use super::{
-        EvidencePacket, EvidenceSink, EvidenceSinkError, Orchestrator, StepOutcome,
-        TelemetrySource,
+        EvidencePacket, EvidenceSink, EvidenceSinkError, Orchestrator, StepOutcome, TelemetrySource,
     };
     use crate::{
         attestation::{AttestationProvider, Ed25519AttestationProvider, MockSecureElement},
@@ -399,7 +397,9 @@ mod tests {
 
     impl RecordingSink {
         fn new() -> Self {
-            Self { packets: Vec::new() }
+            Self {
+                packets: Vec::new(),
+            }
         }
     }
 
@@ -423,7 +423,10 @@ mod tests {
     }
 
     impl SyntheticTelemetrySource {
-        fn new(events: VecDeque<TelemetryUpdate>, pending_gps_samples: VecDeque<SynchronizedGpsSample>) -> Self {
+        fn new(
+            events: VecDeque<TelemetryUpdate>,
+            pending_gps_samples: VecDeque<SynchronizedGpsSample>,
+        ) -> Self {
             Self {
                 events,
                 pending_gps_samples,
@@ -434,7 +437,10 @@ mod tests {
 
     impl TelemetrySource for SyntheticTelemetrySource {
         fn recv_next(&mut self) -> Result<TelemetryUpdate, TelemetryError> {
-            let event = self.events.pop_front().ok_or(TelemetryError::BufferOverflow)?;
+            let event = self
+                .events
+                .pop_front()
+                .ok_or(TelemetryError::BufferOverflow)?;
             if matches!(event, TelemetryUpdate::GpsObservationQueued { .. }) {
                 self.gps_ready = true;
             }
@@ -461,11 +467,7 @@ mod tests {
 
     #[test]
     fn full_loop_processes_signs_and_reports_rejection() {
-        let imu_sample = ImuSample::new(
-            0.01,
-            Vector3::new(0.0, 0.0, -9.80665),
-            Vector3::zeros(),
-        );
+        let imu_sample = ImuSample::new(0.01, Vector3::new(0.0, 0.0, -9.80665), Vector3::zeros());
         let mut imu_frame = MavlinkFrameBuffer::new();
         imu_frame
             .extend_from_slice(&[0xFD, 0x15, 0x01, 0x69])

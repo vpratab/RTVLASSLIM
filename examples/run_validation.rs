@@ -44,7 +44,10 @@ fn main() {
     println!("Validation file: {}", path.display());
     println!("Rows: {}", report.total_rows);
     println!("GPS updates: {}", report.gps_updates_processed);
-    println!("Trusted/Flagged/Rejected: {}/{}/{}", report.trusted_verdicts, report.flagged_verdicts, report.rejected_verdicts);
+    println!(
+        "Trusted/Flagged/Rejected: {}/{}/{}",
+        report.trusted_verdicts, report.flagged_verdicts, report.rejected_verdicts
+    );
     println!(
         "Anomaly TPR/FPR: {:.3}/{:.3}",
         report.anomaly_true_positive_rate(),

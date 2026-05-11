@@ -13,6 +13,5 @@ pub use conversions::{
 pub use mavlink_handler::{
     AuxiliaryObservationConfig, DEFAULT_MAVLINK_UDP_ADDRESS, GpsNoiseModel,
     MAX_MAVLINK_FRAME_BYTES, MavlinkFrameBuffer, MavlinkSubscriber, MavlinkSubscriberConfig,
-    PendingGpsSample, SynchronizedGpsSample, TelemetryError, TelemetryUpdate,
-    purge_frame_buffer,
+    PendingGpsSample, SynchronizedGpsSample, TelemetryError, TelemetryUpdate, purge_frame_buffer,
 };

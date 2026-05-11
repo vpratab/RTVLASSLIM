@@ -25,8 +25,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let connection = argument_value("--connection")
-        .unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
+    let connection =
+        argument_value("--connection").unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
     let frame_limit = argument_value("--frame-limit")
         .map(|value| value.parse::<usize>().map_err(|error| error.to_string()))
         .transpose()?

@@ -51,10 +51,10 @@ fn run() -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
 
-    let nominal_report =
-        run_monitor_dataset_file(&input_path, thresholds, ewma_alpha).map_err(|error| error.to_string())?;
-    let spoofed_report =
-        run_monitor_dataset_file(&spoofed_path, thresholds, ewma_alpha).map_err(|error| error.to_string())?;
+    let nominal_report = run_monitor_dataset_file(&input_path, thresholds, ewma_alpha)
+        .map_err(|error| error.to_string())?;
+    let spoofed_report = run_monitor_dataset_file(&spoofed_path, thresholds, ewma_alpha)
+        .map_err(|error| error.to_string())?;
 
     println!("Nominal dataset: {}", input_path.display());
     println!("  samples: {}", nominal_report.total_samples);

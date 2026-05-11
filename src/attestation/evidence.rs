@@ -130,7 +130,9 @@ impl fmt::Display for AttestationError {
         match self {
             Self::Serialization(error) => write!(f, "postcard serialization failed: {error:?}"),
             Self::InvalidVerifyingKey => write!(f, "public key bytes could not be parsed"),
-            Self::SignatureVerificationFailed => write!(f, "evidence signature verification failed"),
+            Self::SignatureVerificationFailed => {
+                write!(f, "evidence signature verification failed")
+            }
             Self::SecureElementConfiguration { reason } => {
                 write!(f, "mock secure element configuration error: {reason}")
             }
@@ -150,7 +152,8 @@ impl fmt::Display for AttestationError {
 
 pub fn verify_evidence(signed_evidence: &SignedEvidencePacket) -> Result<(), AttestationError> {
     let mut serialization_buffer = [0_u8; MAX_EVIDENCE_PACKET_BYTES];
-    let serialized_packet = serialize_evidence(&signed_evidence.evidence, &mut serialization_buffer)?;
+    let serialized_packet =
+        serialize_evidence(&signed_evidence.evidence, &mut serialization_buffer)?;
 
     let verifying_key = VerifyingKey::from_bytes(&signed_evidence.public_key)
         .map_err(|_| AttestationError::InvalidVerifyingKey)?;

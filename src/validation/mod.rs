@@ -131,7 +131,11 @@ impl ValidationRow {
             (None, None, None) => return Ok(None),
             _ => return Err(ValidationError::IncompleteGpsObservation),
         };
-        let gps_velocity = match (self.gps_vx_ned_mps, self.gps_vy_ned_mps, self.gps_vz_ned_mps) {
+        let gps_velocity = match (
+            self.gps_vx_ned_mps,
+            self.gps_vy_ned_mps,
+            self.gps_vz_ned_mps,
+        ) {
             (Some(vx), Some(vy), Some(vz)) => Vector3::new(vx, vy, vz),
             _ => return Err(ValidationError::IncompleteGpsObservation),
         };
@@ -221,8 +225,10 @@ pub fn run_csv_validation_reader<R: Read>(
 ) -> Result<ValidationReport, ValidationError> {
     let mut csv_reader = csv::Reader::from_reader(reader);
     let mut state = config.initial_state.clone();
-    let mut monitor =
-        StatisticalMonitor::new(config.thresholds, EwmaRiskAccumulator::new(config.ewma_alpha));
+    let mut monitor = StatisticalMonitor::new(
+        config.thresholds,
+        EwmaRiskAccumulator::new(config.ewma_alpha),
+    );
     let mut report = ValidationReport::default();
 
     for row in csv_reader.deserialize::<ValidationRow>() {
@@ -254,7 +260,10 @@ pub fn run_csv_validation_reader<R: Read>(
 
         if row.label_spoofed {
             report.spoof_labeled_updates += 1;
-            if matches!(verdict.trust_level, TrustLevel::Flagged | TrustLevel::Rejected) {
+            if matches!(
+                verdict.trust_level,
+                TrustLevel::Flagged | TrustLevel::Rejected
+            ) {
                 report.anomaly_true_positives += 1;
             }
             if matches!(verdict.trust_level, TrustLevel::Rejected) {
@@ -262,7 +271,10 @@ pub fn run_csv_validation_reader<R: Read>(
             }
         } else {
             report.clean_labeled_updates += 1;
-            if matches!(verdict.trust_level, TrustLevel::Flagged | TrustLevel::Rejected) {
+            if matches!(
+                verdict.trust_level,
+                TrustLevel::Flagged | TrustLevel::Rejected
+            ) {
                 report.anomaly_false_positives += 1;
             }
             if matches!(verdict.trust_level, TrustLevel::Rejected) {

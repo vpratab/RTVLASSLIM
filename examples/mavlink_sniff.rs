@@ -13,8 +13,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let connection = argument_value("--connection")
-        .unwrap_or_else(|| "udpout:127.0.0.1:14550".to_owned());
+    let connection =
+        argument_value("--connection").unwrap_or_else(|| "udpout:127.0.0.1:14550".to_owned());
     let event_limit = argument_value("--event-limit")
         .map(|value| value.parse::<usize>().map_err(|error| error.to_string()))
         .transpose()?

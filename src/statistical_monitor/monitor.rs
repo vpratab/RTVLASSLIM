@@ -156,8 +156,8 @@ impl StatisticalMonitor {
         let (barometer_squared_mahalanobis_distance, barometer_residual_m) =
             match barometer_observation {
                 Some(barometer_observation) => {
-                    let barometer_residual_m =
-                        barometer_observation.altitude_ned_down_m - predicted_state.nominal.position_ned_m.z;
+                    let barometer_residual_m = barometer_observation.altitude_ned_down_m
+                        - predicted_state.nominal.position_ned_m.z;
                     let innovation_variance = scalar_innovation_variance(
                         &BarometerObservation::observation_matrix(),
                         &predicted_state.covariance,
@@ -168,30 +168,36 @@ impl StatisticalMonitor {
                         innovation_variance,
                         "barometer",
                     )?;
-                    (Some(squared_mahalanobis_distance), Some(barometer_residual_m))
+                    (
+                        Some(squared_mahalanobis_distance),
+                        Some(barometer_residual_m),
+                    )
                 }
                 None => (None, None),
             };
-        let (heading_squared_mahalanobis_distance, heading_residual_rad) =
-            match heading_observation {
-                Some(heading_observation) => {
-                    let predicted_heading = predicted_heading_rad(predicted_state);
-                    let heading_residual_rad =
-                        wrap_angle_pi(heading_observation.heading_rad - predicted_heading);
-                    let innovation_variance = scalar_innovation_variance(
-                        &HeadingObservation::observation_matrix(),
-                        &predicted_state.covariance,
-                        heading_observation.observation_noise()[(0, 0)],
-                    );
-                    let squared_mahalanobis_distance = scalar_squared_mahalanobis_distance(
-                        heading_residual_rad,
-                        innovation_variance,
-                        "heading",
-                    )?;
-                    (Some(squared_mahalanobis_distance), Some(heading_residual_rad))
-                }
-                None => (None, None),
-            };
+        let (heading_squared_mahalanobis_distance, heading_residual_rad) = match heading_observation
+        {
+            Some(heading_observation) => {
+                let predicted_heading = predicted_heading_rad(predicted_state);
+                let heading_residual_rad =
+                    wrap_angle_pi(heading_observation.heading_rad - predicted_heading);
+                let innovation_variance = scalar_innovation_variance(
+                    &HeadingObservation::observation_matrix(),
+                    &predicted_state.covariance,
+                    heading_observation.observation_noise()[(0, 0)],
+                );
+                let squared_mahalanobis_distance = scalar_squared_mahalanobis_distance(
+                    heading_residual_rad,
+                    innovation_variance,
+                    "heading",
+                )?;
+                (
+                    Some(squared_mahalanobis_distance),
+                    Some(heading_residual_rad),
+                )
+            }
+            None => (None, None),
+        };
         let (clock_bias_squared_mahalanobis_distance, clock_bias_residual_m) =
             match clock_bias_observation {
                 Some(clock_bias_observation) => {
@@ -209,32 +215,39 @@ impl StatisticalMonitor {
                 }
                 None => (None, None),
             };
-        let clock_bias_persistent_score =
-            match (&mut self.clock_bias_persistence, clock_bias_observation, clock_bias_residual_m) {
-                (Some(persistence_state), Some(clock_bias_observation), Some(clock_bias_residual_m)) => {
-                    let normalized_absolute_residual =
-                        clock_bias_residual_m.abs() / clock_bias_observation.clock_bias_std_m.max(1.0e-6);
-                    Some(persistence_state.update(normalized_absolute_residual))
-                }
-                (Some(persistence_state), _, _) => {
-                    persistence_state.reset();
-                    Some(0.0)
-                }
-                (None, _, _) => None,
-            };
+        let clock_bias_persistent_score = match (
+            &mut self.clock_bias_persistence,
+            clock_bias_observation,
+            clock_bias_residual_m,
+        ) {
+            (
+                Some(persistence_state),
+                Some(clock_bias_observation),
+                Some(clock_bias_residual_m),
+            ) => {
+                let normalized_absolute_residual = clock_bias_residual_m.abs()
+                    / clock_bias_observation.clock_bias_std_m.max(1.0e-6);
+                Some(persistence_state.update(normalized_absolute_residual))
+            }
+            (Some(persistence_state), _, _) => {
+                persistence_state.reset();
+                Some(0.0)
+            }
+            (None, _, _) => None,
+        };
 
         let squared_mahalanobis_distance = gps_squared_mahalanobis_distance
             + barometer_squared_mahalanobis_distance.unwrap_or(0.0)
             + heading_squared_mahalanobis_distance.unwrap_or(0.0)
             + clock_bias_squared_mahalanobis_distance.unwrap_or(0.0);
         let accumulated_risk = self.risk_accumulator.update(squared_mahalanobis_distance);
-        let persistent_clock_reject = match (self.clock_bias_persistence, clock_bias_persistent_score)
-        {
-            (Some(persistence_state), Some(score)) => {
-                score >= persistence_state.config.rejection_score_threshold
-            }
-            _ => false,
-        };
+        let persistent_clock_reject =
+            match (self.clock_bias_persistence, clock_bias_persistent_score) {
+                (Some(persistence_state), Some(score)) => {
+                    score >= persistence_state.config.rejection_score_threshold
+                }
+                _ => false,
+            };
         let trust_level =
             classify_trust_level(accumulated_risk, self.thresholds, persistent_clock_reject);
 
@@ -388,7 +401,11 @@ fn scalar_squared_mahalanobis_distance(
 }
 
 fn predicted_heading_rad(predicted_state: &EskfState) -> f32 {
-    predicted_state.nominal.attitude_body_to_ned.euler_angles().2
+    predicted_state
+        .nominal
+        .attitude_body_to_ned
+        .euler_angles()
+        .2
 }
 
 fn wrap_angle_pi(mut angle_rad: f32) -> f32 {
@@ -410,8 +427,8 @@ mod tests {
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
         statistical_monitor::observation::{
-            BarometerObservation, ChiSquareThresholdConfig, ClockBiasObservation,
-            GpsObservation, HeadingObservation, TrustLevel,
+            BarometerObservation, ChiSquareThresholdConfig, ClockBiasObservation, GpsObservation,
+            HeadingObservation, TrustLevel,
         },
     };
 
@@ -473,8 +490,7 @@ mod tests {
             0.5,
         );
         let barometer_observation = BarometerObservation::new(10.1, 12.0, 0.5);
-        let heading_observation =
-            HeadingObservation::new(10.1, core::f32::consts::FRAC_PI_2, 0.08);
+        let heading_observation = HeadingObservation::new(10.1, core::f32::consts::FRAC_PI_2, 0.08);
 
         let thresholds = ChiSquareThresholdConfig::new(12.592, 22.458);
         let risk_accumulator = EwmaRiskAccumulator::new(1.0);

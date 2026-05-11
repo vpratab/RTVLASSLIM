@@ -3,7 +3,9 @@ use nalgebra::{UnitQuaternion, Vector3};
 use rtvlas::{
     ekf_core::{
         predict::predict_in_place,
-        state::{EskfState, ImuNoiseModel, ImuSample, NominalState, PredictConfig, StateCovariance},
+        state::{
+            EskfState, ImuNoiseModel, ImuSample, NominalState, PredictConfig, StateCovariance,
+        },
     },
     statistical_monitor::{
         monitor::{EwmaRiskAccumulator, StatisticalMonitor},

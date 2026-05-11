@@ -22,8 +22,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let connection = argument_value("--connection")
-        .unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
+    let connection =
+        argument_value("--connection").unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
     let samples = argument_value("--samples")
         .map(|value| value.parse::<usize>().map_err(|error| error.to_string()))
         .transpose()?
@@ -76,7 +76,9 @@ fn run() -> Result<(), String> {
             .map_err(|error| error.to_string())?
         {
             writer
-                .serialize(MonitorDatasetRow::from_synchronized_sample(&synchronized_sample))
+                .serialize(MonitorDatasetRow::from_synchronized_sample(
+                    &synchronized_sample,
+                ))
                 .map_err(|error| error.to_string())?;
             writer.flush().map_err(|error| error.to_string())?;
             purge_frame_buffer(&mut synchronized_sample.raw_frame);

@@ -148,7 +148,11 @@ impl MonitorDatasetRow {
         GpsObservation::from_accuracy_metrics(
             self.timestamp_s,
             Vector3::new(self.gps_px_ned_m, self.gps_py_ned_m, self.gps_pz_ned_m),
-            Vector3::new(self.gps_vx_ned_mps, self.gps_vy_ned_mps, self.gps_vz_ned_mps),
+            Vector3::new(
+                self.gps_vx_ned_mps,
+                self.gps_vy_ned_mps,
+                self.gps_vz_ned_mps,
+            ),
             self.gps_horizontal_position_std_m,
             self.gps_vertical_position_std_m,
             self.gps_horizontal_velocity_std_mps,
@@ -369,7 +373,10 @@ pub fn run_monitor_dataset_reader<R: Read>(
 
         if row.label_spoofed {
             report.spoof_labeled_samples += 1;
-            if matches!(verdict.trust_level, TrustLevel::Flagged | TrustLevel::Rejected) {
+            if matches!(
+                verdict.trust_level,
+                TrustLevel::Flagged | TrustLevel::Rejected
+            ) {
                 report.anomaly_true_positives += 1;
             }
             if matches!(verdict.trust_level, TrustLevel::Rejected) {
@@ -377,7 +384,10 @@ pub fn run_monitor_dataset_reader<R: Read>(
             }
         } else {
             report.clean_labeled_samples += 1;
-            if matches!(verdict.trust_level, TrustLevel::Flagged | TrustLevel::Rejected) {
+            if matches!(
+                verdict.trust_level,
+                TrustLevel::Flagged | TrustLevel::Rejected
+            ) {
                 report.anomaly_false_positives += 1;
             }
             if matches!(verdict.trust_level, TrustLevel::Rejected) {
@@ -629,15 +639,16 @@ mod tests {
         );
         let row = MonitorDatasetRow::from_synchronized_sample(&SynchronizedGpsSample {
             timestamp_ns: 1_000_000_000,
-            gps_observation: crate::statistical_monitor::observation::GpsObservation::from_accuracy_metrics(
-                1.0,
-                Vector3::new(120.0, -60.0, 15.0),
-                Vector3::new(12.0, -6.0, 1.5),
-                1.5,
-                2.0,
-                0.3,
-                0.5,
-            ),
+            gps_observation:
+                crate::statistical_monitor::observation::GpsObservation::from_accuracy_metrics(
+                    1.0,
+                    Vector3::new(120.0, -60.0, 15.0),
+                    Vector3::new(12.0, -6.0, 1.5),
+                    1.5,
+                    2.0,
+                    0.3,
+                    0.5,
+                ),
             barometer_observation: None,
             heading_observation: None,
             aligned_predicted_state: nominal_state,

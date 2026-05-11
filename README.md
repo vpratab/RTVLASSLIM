@@ -15,6 +15,29 @@ It is not a finished product, not a validated deployment claim, and not a resear
 - A live PX4 SIH spoof-proxy path that mutates `GLOBAL_POSITION_INT` in flight and exercises the end-to-end monitor against live simulator telemetry.
 - A processed-TEXBAT replay harness that aligns clean and spoofed navigation-solution traces and measures scenario-level detection outcomes, including optional clock-bias checks.
 
+## Quick Start
+
+```powershell
+cargo check --all-targets
+cargo test --lib
+cargo run --example gps_spoof
+```
+
+## Repository Structure
+
+- Core crate modules live under `src/`.
+- Runnable smoke tests, live utilities, and replay drivers live under `examples/`.
+- Verified helper entry points live under `scripts/`.
+- Repo maps and verification notes live under `docs/`.
+
+More detailed maps:
+
+- [docs/repository-layout.md](docs/repository-layout.md)
+- [docs/verification.md](docs/verification.md)
+- [examples/README.md](examples/README.md)
+- [scripts/README.md](scripts/README.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## What Is Implemented
 
 - `ekf_core`
@@ -161,3 +184,10 @@ This repository should be understood as an early-stage systems prototype:
 - now also verified on a narrow live PX4 SIH MAVLink-spoof path where verdicts stayed trusted before spoof onset and then flipped to sustained rejection after a step GPS offset was injected
 - now also verified on a narrow processed-TEXBAT replay path, where it performs strongly on `ds2`, improves substantially on `ds3`, and remains partial on `ds7`
 - potentially useful as a foundation for a real PX4/TEXBAT validation effort
+
+## License
+
+This repository is dual-licensed under MIT or Apache-2.0, at your option.
+
+- [LICENSE-MIT](LICENSE-MIT)
+- [LICENSE-APACHE](LICENSE-APACHE)

@@ -128,14 +128,15 @@ pub fn offset_geodetic_position_ned(
 
     let latitude_rad = geodetic_position.latitude_rad
         + ned_offset_m.x / (meridian_radius_m + geodetic_position.altitude_m);
-    let longitude_denominator_m = (prime_vertical_radius_m + geodetic_position.altitude_m)
-        * cos_lat.abs().max(1.0e-9);
+    let longitude_denominator_m =
+        (prime_vertical_radius_m + geodetic_position.altitude_m) * cos_lat.abs().max(1.0e-9);
     let longitude_delta_rad = if cos_lat >= 0.0 {
         ned_offset_m.y / longitude_denominator_m
     } else {
         -ned_offset_m.y / longitude_denominator_m
     };
-    let longitude_rad = normalise_longitude_rad(geodetic_position.longitude_rad + longitude_delta_rad);
+    let longitude_rad =
+        normalise_longitude_rad(geodetic_position.longitude_rad + longitude_delta_rad);
     let altitude_m = geodetic_position.altitude_m - ned_offset_m.z;
 
     GeodeticPosition::new(latitude_rad, longitude_rad, altitude_m)
@@ -178,12 +179,9 @@ fn ecef_to_ned_rotation(latitude_rad: f64, longitude_rad: f64) -> Matrix3<f64> {
 }
 
 fn normalise_longitude_rad(longitude_rad: f64) -> f64 {
-    let wrapped = (longitude_rad + PI).rem_euclid(2.0 * PI) - PI;
-    if wrapped == -PI {
-        PI
-    } else {
-        wrapped
-    }
+    let period = 2.0 * PI;
+    let wrapped = longitude_rad + PI - period * libm::floor((longitude_rad + PI) / period) - PI;
+    if wrapped == -PI { PI } else { wrapped }
 }
 
 #[cfg(test)]
