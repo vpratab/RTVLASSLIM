@@ -16,3 +16,6 @@ pub mod validation;
 
 #[cfg(all(feature = "validation", feature = "std"))]
 pub mod benchmark;
+
+#[cfg(all(feature = "texbat", feature = "std"))]
+pub mod texbat_harness;

@@ -5,8 +5,9 @@ use nalgebra::linalg::Cholesky;
 use crate::ekf_core::state::EskfState;
 
 use super::observation::{
-    BarometerObservation, ChiSquareThresholdConfig, GpsObservation, HeadingObservation,
-    InnovationCovariance, InnovationVector, MonitorVerdict, ObservationJacobian, TrustLevel,
+    BarometerObservation, ChiSquareThresholdConfig, ClockBiasObservation, GpsObservation,
+    HeadingObservation, InnovationCovariance, InnovationVector, MonitorVerdict,
+    ObservationJacobian, TrustLevel,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,6 +79,23 @@ impl StatisticalMonitor {
         barometer_observation: Option<&BarometerObservation>,
         heading_observation: Option<&HeadingObservation>,
     ) -> Result<MonitorVerdict, MonitorError> {
+        self.evaluate_observations_with_clock(
+            predicted_state,
+            gps_observation,
+            barometer_observation,
+            heading_observation,
+            None,
+        )
+    }
+
+    pub fn evaluate_observations_with_clock(
+        &mut self,
+        predicted_state: &EskfState,
+        gps_observation: &GpsObservation,
+        barometer_observation: Option<&BarometerObservation>,
+        heading_observation: Option<&HeadingObservation>,
+        clock_bias_observation: Option<&ClockBiasObservation>,
+    ) -> Result<MonitorVerdict, MonitorError> {
         validate_thresholds(self.thresholds)?;
         validate_ewma_alpha(self.risk_accumulator.alpha())?;
 
@@ -131,10 +149,28 @@ impl StatisticalMonitor {
                 }
                 None => (None, None),
             };
+        let (clock_bias_squared_mahalanobis_distance, clock_bias_residual_m) =
+            match clock_bias_observation {
+                Some(clock_bias_observation) => {
+                    let clock_bias_residual_m = clock_bias_observation.observed_clock_bias_m
+                        - clock_bias_observation.reference_clock_bias_m;
+                    let squared_mahalanobis_distance = scalar_squared_mahalanobis_distance(
+                        clock_bias_residual_m,
+                        clock_bias_observation.observation_noise()[(0, 0)],
+                        "clock bias",
+                    )?;
+                    (
+                        Some(squared_mahalanobis_distance),
+                        Some(clock_bias_residual_m),
+                    )
+                }
+                None => (None, None),
+            };
 
         let squared_mahalanobis_distance = gps_squared_mahalanobis_distance
             + barometer_squared_mahalanobis_distance.unwrap_or(0.0)
-            + heading_squared_mahalanobis_distance.unwrap_or(0.0);
+            + heading_squared_mahalanobis_distance.unwrap_or(0.0)
+            + clock_bias_squared_mahalanobis_distance.unwrap_or(0.0);
         let accumulated_risk = self.risk_accumulator.update(squared_mahalanobis_distance);
         let trust_level = classify_trust_level(accumulated_risk, self.thresholds);
 
@@ -143,10 +179,12 @@ impl StatisticalMonitor {
             gps_squared_mahalanobis_distance,
             barometer_squared_mahalanobis_distance,
             heading_squared_mahalanobis_distance,
+            clock_bias_squared_mahalanobis_distance,
             accumulated_risk,
             innovation,
             barometer_residual_m,
             heading_residual_rad,
+            clock_bias_residual_m,
             trust_level,
         })
     }
@@ -303,8 +341,8 @@ mod tests {
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
         statistical_monitor::observation::{
-            BarometerObservation, ChiSquareThresholdConfig, GpsObservation, HeadingObservation,
-            TrustLevel,
+            BarometerObservation, ChiSquareThresholdConfig, ClockBiasObservation,
+            GpsObservation, HeadingObservation, TrustLevel,
         },
     };
 
@@ -385,6 +423,48 @@ mod tests {
         assert!(verdict.gps_squared_mahalanobis_distance < thresholds.flagged_risk_threshold);
         assert!(verdict.barometer_squared_mahalanobis_distance.unwrap() > 100.0);
         assert!(verdict.heading_squared_mahalanobis_distance.unwrap() > 100.0);
+        assert_eq!(verdict.trust_level, TrustLevel::Rejected);
+    }
+
+    #[test]
+    fn clock_bias_anomaly_raises_total_risk() {
+        let nominal = NominalState {
+            timestamp_s: 20.0,
+            position_ned_m: Vector3::new(1.0, -1.0, 0.5),
+            velocity_ned_mps: Vector3::new(0.1, -0.1, 0.0),
+            attitude_body_to_ned: UnitQuaternion::identity(),
+            accel_bias_mps2: Vector3::zeros(),
+            gyro_bias_rps: Vector3::zeros(),
+            geodetic_reference: None,
+        };
+        let predicted_state = EskfState::new(nominal, StateCovariance::identity() * 1.0e-3);
+        let gps_observation = GpsObservation::from_accuracy_metrics(
+            20.1,
+            Vector3::new(1.2, -0.8, 0.4),
+            Vector3::new(0.1, -0.1, 0.0),
+            1.5,
+            2.0,
+            0.3,
+            0.5,
+        );
+        let clock_bias_observation = ClockBiasObservation::new(20.1, 0.0, 120.0, 5.0);
+
+        let thresholds = ChiSquareThresholdConfig::new(12.592, 22.458);
+        let risk_accumulator = EwmaRiskAccumulator::new(1.0);
+        let mut monitor = StatisticalMonitor::new(thresholds, risk_accumulator);
+
+        let verdict = monitor
+            .evaluate_observations_with_clock(
+                &predicted_state,
+                &gps_observation,
+                None,
+                None,
+                Some(&clock_bias_observation),
+            )
+            .unwrap();
+
+        assert!(verdict.gps_squared_mahalanobis_distance < thresholds.flagged_risk_threshold);
+        assert!(verdict.clock_bias_squared_mahalanobis_distance.unwrap() > 500.0);
         assert_eq!(verdict.trust_level, TrustLevel::Rejected);
     }
 }

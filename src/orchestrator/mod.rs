@@ -602,10 +602,12 @@ mod tests {
             gps_squared_mahalanobis_distance: 0.5,
             barometer_squared_mahalanobis_distance: None,
             heading_squared_mahalanobis_distance: None,
+            clock_bias_squared_mahalanobis_distance: None,
             accumulated_risk: 0.5,
             innovation: crate::statistical_monitor::observation::ObservationVector::zeros(),
             barometer_residual_m: None,
             heading_residual_rad: None,
+            clock_bias_residual_m: None,
             trust_level: TrustLevel::Trusted,
         };
         let evidence = EvidencePacket::from_synchronized_sample(

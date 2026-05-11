@@ -5,6 +5,7 @@ use crate::ekf_core::state::{ATT_IDX, ERROR_STATE_DIM, POS_IDX, VEL_IDX};
 pub const GPS_OBSERVATION_DIM: usize = 6;
 pub const BAROMETER_OBSERVATION_DIM: usize = 1;
 pub const HEADING_OBSERVATION_DIM: usize = 1;
+pub const CLOCK_BIAS_OBSERVATION_DIM: usize = 1;
 
 pub type ObservationVector = SVector<f32, GPS_OBSERVATION_DIM>;
 pub type ObservationNoiseMatrix = SMatrix<f32, GPS_OBSERVATION_DIM, GPS_OBSERVATION_DIM>;
@@ -151,6 +152,36 @@ impl HeadingObservation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClockBiasObservation {
+    pub timestamp_s: f64,
+    pub reference_clock_bias_m: f32,
+    pub observed_clock_bias_m: f32,
+    pub clock_bias_std_m: f32,
+}
+
+impl ClockBiasObservation {
+    pub const fn new(
+        timestamp_s: f64,
+        reference_clock_bias_m: f32,
+        observed_clock_bias_m: f32,
+        clock_bias_std_m: f32,
+    ) -> Self {
+        Self {
+            timestamp_s,
+            reference_clock_bias_m,
+            observed_clock_bias_m,
+            clock_bias_std_m,
+        }
+    }
+
+    pub fn observation_noise(&self) -> ScalarObservationNoiseMatrix {
+        ScalarObservationNoiseMatrix::from_element(
+            self.clock_bias_std_m * self.clock_bias_std_m,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChiSquareThresholdConfig {
     pub flagged_risk_threshold: f32,
     pub rejected_risk_threshold: f32,
@@ -178,9 +209,11 @@ pub struct MonitorVerdict {
     pub gps_squared_mahalanobis_distance: f32,
     pub barometer_squared_mahalanobis_distance: Option<f32>,
     pub heading_squared_mahalanobis_distance: Option<f32>,
+    pub clock_bias_squared_mahalanobis_distance: Option<f32>,
     pub accumulated_risk: f32,
     pub innovation: InnovationVector,
     pub barometer_residual_m: Option<f32>,
     pub heading_residual_rad: Option<f32>,
+    pub clock_bias_residual_m: Option<f32>,
     pub trust_level: TrustLevel,
 }

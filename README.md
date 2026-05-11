@@ -2,7 +2,7 @@
 
 `rtvlas` is a Rust prototype for GPS spoofing detection in autonomy telemetry.
 
-It is not a finished product, not a validated benchmark result, and not a research breakthrough on its own. It is a structured prototype that combines:
+It is not a finished product, not a validated deployment claim, and not a research breakthrough on its own. It is a structured prototype that combines:
 
 - IMU-driven ESKF-style state propagation in a local NED frame.
 - GPS innovation checking with Mahalanobis distance and EWMA risk accumulation.
@@ -12,6 +12,7 @@ It is not a finished product, not a validated benchmark result, and not a resear
 - A process -> sign -> purge orchestrator that explicitly wipes raw MAVLink frame buffers after attestation.
 - An offline CSV validation harness for replaying logged traces and summarizing detection outcomes.
 - A PX4 SIH capture-and-benchmark path that records synchronized monitor inputs and measures simulator-only detection outcomes plus per-sample evaluation latency.
+- A processed-TEXBAT replay harness that aligns clean and spoofed navigation-solution traces and measures scenario-level detection outcomes, including optional clock-bias checks.
 
 ## What Is Implemented
 
@@ -42,14 +43,20 @@ It is not a finished product, not a validated benchmark result, and not a resear
   - Capture format for synchronized PX4 monitor inputs.
   - Spoofed replay generation by perturbing captured GPS position/velocity.
   - Simulator-only nominal/spoofed report generation with latency statistics.
+- `texbat_harness`
+  - MAT-file loader for processed TEXBAT `navsol.mat` artifacts.
+  - Clean/spoofed scenario alignment using published TEXBAT timing offsets.
+  - Optional clock-bias residual checks for time-push spoofing scenarios.
+  - Scenario replay CSV export and per-scenario TPR/FPR reporting.
 
 ## What Is Not Implemented
 
-- No TEXBAT dataset replay or TEXBAT benchmark result exists yet.
+- No raw-TEXBAT IF replay or IMU-paired TEXBAT benchmark exists yet.
 - No real-world or hardware-flight detection-rate, false-positive, or latency benchmark is claimed here.
 - No hardware-backed secure element, HSM, TPM, enclave, or flight-controller integration is present.
 - No GPS update is fused back into the filter state yet; GPS is monitored, not used as a measurement update.
 - No production persistence or distributed-ledger sink exists; only local file/log sinks are provided.
+- The TEXBAT path uses processed `navsol.mat` reference trajectories, not raw IF samples and not paired IMU from TEXBAT.
 
 ## Verification Performed
 
@@ -68,7 +75,14 @@ bash scripts/wsl_inline_live.sh
 bash scripts/wsl_px4_benchmark.sh 60
 ```
 
-At the time of writing, the crate passes 17 library tests covering:
+and, on the local processed TEXBAT artifacts downloaded from the UT Radionavigation Laboratory:
+
+```powershell
+.\scripts\download_texbat_processed.ps1
+cargo run --example run_texbat_harness
+```
+
+At the time of writing, the crate passes 19 library tests covering:
 
 - IMU propagation staying stable at rest.
 - GPS innovation rejection on a large spoof-like offset.
@@ -91,8 +105,15 @@ The live PX4 verification that has actually been run is narrow and specific:
   - spoofed replay dataset: `0/0/60` trusted/flagged/rejected, anomaly TPR/FPR `1.000/0.000`, rejected TPR/FPR `1.000/0.000`
   - nominal evaluation latency mean/p95/max: `333.17 / 377.31 / 935.51 us`
   - spoofed evaluation latency mean/p95/max: `312.32 / 334.31 / 382.50 us`
+- `cargo run --example run_texbat_harness` was run on `2026-05-10` against the downloaded processed TEXBAT `cleanStatic`, `ds2`, `ds3`, and `ds7` `navsol.mat` files. The harness uses the timing offsets and spoof-onset timings published in the 2016 TEXBAT analysis paper to align the clean and spoofed traces, calibrates constant pre-spoof receiver bias, and then replays the aligned solutions through the monitor with an added clock-bias residual. The observed results were:
+  - `cleanStatic-baseline`: `2115/0/0` trusted/flagged/rejected, anomaly FPR `0.000`, rejected FPR `0.000`, latency mean/p95/max `177.54 / 186.00 / 389.00 us`
+  - `ds2`: `512/25/1563` trusted/flagged/rejected, anomaly TPR/FPR `0.988/0.103`, rejected TPR/FPR `0.979/0.085`, latency mean/p95/max `179.92 / 190.50 / 307.00 us`
+  - `ds3`: `2027/20/49` trusted/flagged/rejected, anomaly TPR/FPR `0.000/0.115`, rejected TPR/FPR `0.000/0.082`, latency mean/p95/max `179.42 / 186.80 / 488.00 us`
+  - `ds7`: `1106/77/992` trusted/flagged/rejected, anomaly TPR/FPR `0.664/0.000`, rejected TPR/FPR `0.616/0.000`, latency mean/p95/max `183.60 / 219.20 / 421.60 us`
 
 Those numbers are narrow and should be read narrowly: they come from PX4 SIH telemetry captured in WSL2 and a synthetic GPS spoof injected into the captured dataset by this repository's own benchmark tooling. They are not TEXBAT results, not a live adversarial spoofing test, and not a claim about general real-world performance.
+
+The TEXBAT numbers are also narrow and should be read narrowly: they come from the UT processed `navsol.mat` products, not the 40+ GB raw IF captures, and this repository does not have paired IMU data for TEXBAT. The harness therefore uses the clean TEXBAT navigation solution as a reference trajectory proxy instead of replaying a true IMU-driven dead-reckoning path. That makes the TEXBAT results useful as an external sanity check, but not a full end-to-end claim for the live MAVLink product path.
 
 ## How To Run
 
@@ -102,6 +123,7 @@ cargo run --example gps_spoof
 cargo run --example run_validation
 cargo run --example px4_sitl_live -- --connection udpout:127.0.0.1:18570
 cargo run --example run_monitor_benchmark -- artifacts/px4_monitor_dataset.csv artifacts/px4_monitor_dataset_spoofed.csv
+cargo run --example run_texbat_harness
 ```
 
 `run_validation` replays the included `examples/synthetic_validation.csv` file and prints TPR/FPR-style summary metrics.
@@ -111,9 +133,10 @@ For the live PX4 path that has been verified here, run it from WSL2 so PX4 and t
 ```bash
 bash scripts/wsl_inline_live.sh
 bash scripts/wsl_px4_benchmark.sh 60
+bash scripts/download_texbat_processed.sh
 ```
 
-There is still no TEXBAT result, no live adversarial spoofed PX4 mission, and no claim beyond the simulator-only injected-spoof benchmark above. The strongest exercised paths today are the library test suite, the synthetic spoofing example, the offline validation example, the UDP/MAVLink loopback test, the WSL-local PX4 SIH nominal run, and the WSL-local PX4 SIH capture/replay benchmark.
+There is still no raw-TEXBAT IF processing path, no paired-IMU TEXBAT replay, no live adversarial spoofed PX4 mission, and no hardware validation. The strongest exercised paths today are the library test suite, the synthetic spoofing example, the offline validation example, the UDP/MAVLink loopback test, the WSL-local PX4 SIH nominal run, the WSL-local PX4 SIH capture/replay benchmark, and the processed-TEXBAT replay harness.
 
 ## Honest Status
 
@@ -123,4 +146,5 @@ This repository should be understood as an early-stage systems prototype:
 - not yet a validated defense-grade detector
 - not yet novel research by itself
 - now verified on a narrow PX4 SIH simulator capture/replay benchmark with clean nominal behavior and full rejection of one injected spoof profile
+- now also verified on a narrow processed-TEXBAT replay path, where it performs strongly on `ds2`, partially on `ds7`, and poorly on `ds3`
 - potentially useful as a foundation for a real PX4/TEXBAT validation effort
