@@ -46,7 +46,7 @@ It is not a finished product, not a validated deployment claim, and not a resear
 - `texbat_harness`
   - MAT-file loader for processed TEXBAT `navsol.mat` artifacts.
   - Clean/spoofed scenario alignment using published TEXBAT timing offsets.
-  - Optional clock-bias residual checks for time-push spoofing scenarios.
+  - Optional persistent clock-bias scoring for time-push spoofing scenarios.
   - Scenario replay CSV export and per-scenario TPR/FPR reporting.
 
 ## What Is Not Implemented
@@ -108,15 +108,15 @@ The live PX4 verification that has actually been run is narrow and specific:
 
 Those PX4 numbers are narrow and should be read narrowly: they come from PX4 SIH telemetry captured in WSL2 and a synthetic GPS spoof injected into the captured dataset by this repository's own benchmark tooling. They are not a live adversarial spoofing test and not a claim about general real-world performance.
 
-- `cargo run --example run_texbat_harness` was run on `2026-05-10` against the downloaded processed TEXBAT `cleanStatic`, `ds2`, `ds3`, and `ds7` `navsol.mat` files. The harness uses the timing offsets and spoof-onset timings published in the 2016 TEXBAT analysis paper to align the clean and spoofed traces, calibrates constant pre-spoof receiver bias, and then replays the aligned solutions through the monitor with an added clock-bias residual. The observed results were:
-  - `cleanStatic-baseline`: `2115/0/0` trusted/flagged/rejected, anomaly FPR `0.000`, rejected FPR `0.000`, latency mean/p95/max `191.77 / 248.90 / 648.20 us`, calibrated clean-alignment offset `0.000000 s`
-  - `ds2`: `513/21/1566` trusted/flagged/rejected, anomaly TPR/FPR `0.988/0.103`, rejected TPR/FPR `0.978/0.093`, latency mean/p95/max `179.26 / 185.00 / 305.20 us`, calibrated clean-alignment offset `-2.003082 s`
-  - `ds3`: `2030/16/50` trusted/flagged/rejected, anomaly TPR/FPR `0.000/0.110`, rejected TPR/FPR `0.000/0.083`, latency mean/p95/max `178.04 / 186.10 / 248.30 us`, calibrated clean-alignment offset `-1.096679 s`
-  - `ds7`: `1106/77/992` trusted/flagged/rejected, anomaly TPR/FPR `0.664/0.000`, rejected TPR/FPR `0.616/0.000`, latency mean/p95/max `180.42 / 197.50 / 329.20 us`, calibrated clean-alignment offset `-0.050000 s`
+- `cargo run --example run_texbat_harness` was run on `2026-05-10` against the downloaded processed TEXBAT `cleanStatic`, `ds2`, `ds3`, and `ds7` `navsol.mat` files. The harness fits an affine clean-alignment map on the pre-spoof segment, calibrates constant pre-spoof receiver bias, and then replays the aligned solutions through the monitor with a persistent clock-bias score added on top of the per-frame Mahalanobis check. The observed results were:
+  - `cleanStatic-baseline`: `2115/0/0` trusted/flagged/rejected, anomaly FPR `0.000`, rejected FPR `0.000`, latency mean/p95/max `176.50 / 183.10 / 295.10 us`, calibrated clean-alignment map `scale=1.000000000`, `offset=-0.000000 s`
+  - `ds2`: `531/13/1556` trusted/flagged/rejected, anomaly TPR/FPR `0.988/0.071`, rejected TPR/FPR `0.981/0.065`, latency mean/p95/max `177.04 / 186.00 / 272.00 us`, calibrated clean-alignment map `scale=1.000750000`, `offset=-14.746918 s`
+  - `ds3`: `817/3/1276` trusted/flagged/rejected, anomaly TPR/FPR `0.800/0.135`, rejected TPR/FPR `0.800/0.130`, latency mean/p95/max `175.84 / 182.40 / 288.90 us`, calibrated clean-alignment map `scale=1.000750000`, `offset=-17.953321 s`
+  - `ds7`: `1040/0/1135` trusted/flagged/rejected, anomaly TPR/FPR `0.705/0.000`, rejected TPR/FPR `0.705/0.000`, latency mean/p95/max `180.81 / 209.40 / 452.50 us`, calibrated clean-alignment map `scale=1.000000000`, `offset=0.000000 s`
 
 The TEXBAT numbers are also narrow and should be read narrowly: they come from the UT processed `navsol.mat` products, not the 40+ GB raw IF captures, and this repository does not have paired IMU data for TEXBAT. The harness therefore uses the clean TEXBAT navigation solution as a reference trajectory proxy instead of replaying a true IMU-driven dead-reckoning path. That makes the TEXBAT results useful as an external sanity check, but not a full end-to-end claim for the live MAVLink product path.
 
-The automatic clean-alignment calibration slightly improves scenario replay consistency, but it does not change the main qualitative outcome: this monitor performs strongly on `ds2`, partially on `ds7`, and still poorly on `ds3` when limited to processed `navsol.mat` trajectories.
+The affine clean-alignment calibration plus persistent clock-bias scoring materially improve `ds3` from a total miss to roughly `0.800` anomaly TPR on the processed replay, but the pre-spoof false-positive rate for `ds3` remains elevated at roughly `0.135`. That is a real remaining limitation of this processed-data path.
 
 ## How To Run
 
@@ -149,5 +149,5 @@ This repository should be understood as an early-stage systems prototype:
 - not yet a validated defense-grade detector
 - not yet novel research by itself
 - now verified on a narrow PX4 SIH simulator capture/replay benchmark with clean nominal behavior and full rejection of one injected spoof profile
-- now also verified on a narrow processed-TEXBAT replay path, where it performs strongly on `ds2`, partially on `ds7`, and poorly on `ds3`
+- now also verified on a narrow processed-TEXBAT replay path, where it performs strongly on `ds2`, improves substantially on `ds3`, and remains partial on `ds7`
 - potentially useful as a foundation for a real PX4/TEXBAT validation effort

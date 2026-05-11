@@ -40,9 +40,46 @@ impl EwmaRiskAccumulator {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClockBiasPersistenceConfig {
+    pub slack_sigma: f32,
+    pub rejection_score_threshold: f32,
+}
+
+impl ClockBiasPersistenceConfig {
+    pub const fn new(slack_sigma: f32, rejection_score_threshold: f32) -> Self {
+        Self {
+            slack_sigma,
+            rejection_score_threshold,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ClockBiasPersistenceState {
+    config: ClockBiasPersistenceConfig,
+    score: f32,
+}
+
+impl ClockBiasPersistenceState {
+    const fn new(config: ClockBiasPersistenceConfig) -> Self {
+        Self { config, score: 0.0 }
+    }
+
+    fn update(&mut self, normalized_absolute_residual: f32) -> f32 {
+        self.score = (self.score + normalized_absolute_residual - self.config.slack_sigma).max(0.0);
+        self.score
+    }
+
+    fn reset(&mut self) {
+        self.score = 0.0;
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StatisticalMonitor {
     thresholds: ChiSquareThresholdConfig,
     risk_accumulator: EwmaRiskAccumulator,
+    clock_bias_persistence: Option<ClockBiasPersistenceState>,
 }
 
 impl StatisticalMonitor {
@@ -53,7 +90,13 @@ impl StatisticalMonitor {
         Self {
             thresholds,
             risk_accumulator,
+            clock_bias_persistence: None,
         }
+    }
+
+    pub fn with_clock_bias_persistence(mut self, config: ClockBiasPersistenceConfig) -> Self {
+        self.clock_bias_persistence = Some(ClockBiasPersistenceState::new(config));
+        self
     }
 
     pub const fn thresholds(&self) -> ChiSquareThresholdConfig {
@@ -166,13 +209,34 @@ impl StatisticalMonitor {
                 }
                 None => (None, None),
             };
+        let clock_bias_persistent_score =
+            match (&mut self.clock_bias_persistence, clock_bias_observation, clock_bias_residual_m) {
+                (Some(persistence_state), Some(clock_bias_observation), Some(clock_bias_residual_m)) => {
+                    let normalized_absolute_residual =
+                        clock_bias_residual_m.abs() / clock_bias_observation.clock_bias_std_m.max(1.0e-6);
+                    Some(persistence_state.update(normalized_absolute_residual))
+                }
+                (Some(persistence_state), _, _) => {
+                    persistence_state.reset();
+                    Some(0.0)
+                }
+                (None, _, _) => None,
+            };
 
         let squared_mahalanobis_distance = gps_squared_mahalanobis_distance
             + barometer_squared_mahalanobis_distance.unwrap_or(0.0)
             + heading_squared_mahalanobis_distance.unwrap_or(0.0)
             + clock_bias_squared_mahalanobis_distance.unwrap_or(0.0);
         let accumulated_risk = self.risk_accumulator.update(squared_mahalanobis_distance);
-        let trust_level = classify_trust_level(accumulated_risk, self.thresholds);
+        let persistent_clock_reject = match (self.clock_bias_persistence, clock_bias_persistent_score)
+        {
+            (Some(persistence_state), Some(score)) => {
+                score >= persistence_state.config.rejection_score_threshold
+            }
+            _ => false,
+        };
+        let trust_level =
+            classify_trust_level(accumulated_risk, self.thresholds, persistent_clock_reject);
 
         Ok(MonitorVerdict {
             squared_mahalanobis_distance,
@@ -180,6 +244,7 @@ impl StatisticalMonitor {
             barometer_squared_mahalanobis_distance,
             heading_squared_mahalanobis_distance,
             clock_bias_squared_mahalanobis_distance,
+            clock_bias_persistent_score,
             accumulated_risk,
             innovation,
             barometer_residual_m,
@@ -284,8 +349,12 @@ fn squared_mahalanobis_distance(
     Ok(innovation.dot(&innovation_whitened))
 }
 
-fn classify_trust_level(accumulated_risk: f32, thresholds: ChiSquareThresholdConfig) -> TrustLevel {
-    if accumulated_risk >= thresholds.rejected_risk_threshold {
+fn classify_trust_level(
+    accumulated_risk: f32,
+    thresholds: ChiSquareThresholdConfig,
+    persistent_clock_reject: bool,
+) -> TrustLevel {
+    if persistent_clock_reject || accumulated_risk >= thresholds.rejected_risk_threshold {
         TrustLevel::Rejected
     } else if accumulated_risk >= thresholds.flagged_risk_threshold {
         TrustLevel::Flagged
@@ -337,7 +406,7 @@ fn wrap_angle_pi(mut angle_rad: f32) -> f32 {
 mod tests {
     use nalgebra::{UnitQuaternion, Vector3};
 
-    use super::{EwmaRiskAccumulator, StatisticalMonitor};
+    use super::{ClockBiasPersistenceConfig, EwmaRiskAccumulator, StatisticalMonitor};
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
         statistical_monitor::observation::{
@@ -466,5 +535,49 @@ mod tests {
         assert!(verdict.gps_squared_mahalanobis_distance < thresholds.flagged_risk_threshold);
         assert!(verdict.clock_bias_squared_mahalanobis_distance.unwrap() > 500.0);
         assert_eq!(verdict.trust_level, TrustLevel::Rejected);
+    }
+
+    #[test]
+    fn persistent_clock_bias_rejects_sustained_moderate_drift() {
+        let nominal = NominalState {
+            timestamp_s: 30.0,
+            position_ned_m: Vector3::zeros(),
+            velocity_ned_mps: Vector3::zeros(),
+            attitude_body_to_ned: UnitQuaternion::identity(),
+            accel_bias_mps2: Vector3::zeros(),
+            gyro_bias_rps: Vector3::zeros(),
+            geodetic_reference: None,
+        };
+        let predicted_state = EskfState::new(nominal, StateCovariance::identity() * 1.0e-3);
+        let gps_observation = GpsObservation::from_accuracy_metrics(
+            30.0,
+            Vector3::zeros(),
+            Vector3::zeros(),
+            1.5,
+            2.0,
+            0.3,
+            0.5,
+        );
+        let thresholds = ChiSquareThresholdConfig::new(12.592, 22.458);
+        let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(0.6))
+            .with_clock_bias_persistence(ClockBiasPersistenceConfig::new(1.0, 20.0));
+
+        let mut last_trust_level = TrustLevel::Trusted;
+        for step in 0..40 {
+            let clock_bias_observation =
+                ClockBiasObservation::new(30.0 + step as f64, 0.0, 8.0, 5.0);
+            let verdict = monitor
+                .evaluate_observations_with_clock(
+                    &predicted_state,
+                    &gps_observation,
+                    None,
+                    None,
+                    Some(&clock_bias_observation),
+                )
+                .unwrap();
+            last_trust_level = verdict.trust_level;
+        }
+
+        assert_eq!(last_trust_level, TrustLevel::Rejected);
     }
 }

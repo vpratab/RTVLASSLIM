@@ -31,53 +31,56 @@ fn run() -> Result<(), String> {
 
     let clean_navsol = texbat_dir.join("cleanStatic_navsol.mat");
     let scenario_configs = vec![
-        TexbatScenarioConfig::new(
+        configure_processed_navsol_proxy(TexbatScenarioConfig::new(
             "cleanStatic-baseline",
             clean_navsol.clone(),
             clean_navsol.clone(),
             0.0,
             None,
-        ),
+        )),
         {
-            let mut config = TexbatScenarioConfig::new(
-            "ds2",
-            clean_navsol.clone(),
-            texbat_dir.join("ds2_navsol.mat"),
-            TEXBAT_SCENARIO_2_OFFSET_FROM_CLEAN_S,
-            Some(scenario_onset_in_file_seconds(
+            let mut config = configure_processed_navsol_proxy(TexbatScenarioConfig::new(
+                "ds2",
+                clean_navsol.clone(),
+                texbat_dir.join("ds2_navsol.mat"),
                 TEXBAT_SCENARIO_2_OFFSET_FROM_CLEAN_S,
-                TEXBAT_SCENARIO_2_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
-            )),
-            );
-            config.alignment_search_window_s = 5.0;
+                Some(scenario_onset_in_file_seconds(
+                    TEXBAT_SCENARIO_2_OFFSET_FROM_CLEAN_S,
+                    TEXBAT_SCENARIO_2_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
+                )),
+            ));
+            config.alignment_search_window_s = 20.0;
+            config.alignment_scale_search_window = 0.0015;
             config
         },
         {
-            let mut config = TexbatScenarioConfig::new(
-            "ds3",
-            clean_navsol.clone(),
-            texbat_dir.join("ds3_navsol.mat"),
-            TEXBAT_SCENARIO_3_OFFSET_FROM_CLEAN_S,
-            Some(scenario_onset_in_file_seconds(
+            let mut config = configure_processed_navsol_proxy(TexbatScenarioConfig::new(
+                "ds3",
+                clean_navsol.clone(),
+                texbat_dir.join("ds3_navsol.mat"),
                 TEXBAT_SCENARIO_3_OFFSET_FROM_CLEAN_S,
-                TEXBAT_SCENARIO_3_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
-            )),
-            );
-            config.alignment_search_window_s = 5.0;
+                Some(scenario_onset_in_file_seconds(
+                    TEXBAT_SCENARIO_3_OFFSET_FROM_CLEAN_S,
+                    TEXBAT_SCENARIO_3_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
+                )),
+            ));
+            config.alignment_search_window_s = 20.0;
+            config.alignment_scale_search_window = 0.0015;
             config
         },
         {
-            let mut config = TexbatScenarioConfig::new(
-            "ds7",
-            clean_navsol,
-            texbat_dir.join("ds7_navsol.mat"),
-            TEXBAT_SCENARIO_7_OFFSET_FROM_CLEAN_S,
-            Some(scenario_onset_in_file_seconds(
+            let mut config = configure_processed_navsol_proxy(TexbatScenarioConfig::new(
+                "ds7",
+                clean_navsol,
+                texbat_dir.join("ds7_navsol.mat"),
                 TEXBAT_SCENARIO_7_OFFSET_FROM_CLEAN_S,
-                TEXBAT_SCENARIO_7_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
-            )),
-            );
+                Some(scenario_onset_in_file_seconds(
+                    TEXBAT_SCENARIO_7_OFFSET_FROM_CLEAN_S,
+                    TEXBAT_SCENARIO_7_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
+                )),
+            ));
             config.alignment_search_window_s = 1.0;
+            config.alignment_scale_search_window = 0.0;
             config
         },
     ];
@@ -118,6 +121,10 @@ fn run() -> Result<(), String> {
             report.calibrated_alignment_offset_s
         );
         println!(
+            "  calibrated clean alignment scale: {:.9}",
+            report.calibrated_alignment_scale
+        );
+        println!(
             "  calibration position bias NED (m): {:.2}, {:.2}, {:.2}",
             report.position_bias_calibration_ned_m.x,
             report.position_bias_calibration_ned_m.y,
@@ -130,4 +137,14 @@ fn run() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn configure_processed_navsol_proxy(mut config: TexbatScenarioConfig) -> TexbatScenarioConfig {
+    config.position_state_std_m = 5.0;
+    config.velocity_state_std_mps = 1.0;
+    config.gps_horizontal_position_std_m = 5.0;
+    config.gps_vertical_position_std_m = 6.0;
+    config.gps_horizontal_velocity_std_mps = 1.0;
+    config.gps_vertical_velocity_std_mps = 1.5;
+    config
 }

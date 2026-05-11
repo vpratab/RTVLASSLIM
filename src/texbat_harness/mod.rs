@@ -13,7 +13,9 @@ use serde::Serialize;
 use crate::{
     ekf_core::state::{ATT_IDX, EskfState, NominalState, StateCovariance},
     statistical_monitor::{
-        monitor::{EwmaRiskAccumulator, MonitorError, StatisticalMonitor},
+        monitor::{
+            ClockBiasPersistenceConfig, EwmaRiskAccumulator, MonitorError, StatisticalMonitor,
+        },
         observation::{
             ChiSquareThresholdConfig, ClockBiasObservation, GpsObservation, TrustLevel,
         },
@@ -45,6 +47,8 @@ pub struct TexbatScenarioConfig {
     pub spoof_onset_in_observed_file_s: Option<f64>,
     pub alignment_search_window_s: f64,
     pub alignment_search_step_s: f64,
+    pub alignment_scale_search_window: f64,
+    pub alignment_scale_search_step: f64,
     pub position_state_std_m: f32,
     pub velocity_state_std_mps: f32,
     pub gps_horizontal_position_std_m: f32,
@@ -70,7 +74,9 @@ impl TexbatScenarioConfig {
             scenario_offset_from_clean_s,
             spoof_onset_in_observed_file_s,
             alignment_search_window_s: 0.0,
-            alignment_search_step_s: 0.05,
+            alignment_search_step_s: 0.25,
+            alignment_scale_search_window: 0.0,
+            alignment_scale_search_step: 0.000_125,
             position_state_std_m: 2.0,
             velocity_state_std_mps: 0.2,
             gps_horizontal_position_std_m: 1.5,
@@ -100,6 +106,7 @@ pub struct TexbatScenarioReport {
     pub p95_evaluation_latency_us: f64,
     pub max_evaluation_latency_us: f64,
     pub calibrated_alignment_offset_s: f64,
+    pub calibrated_alignment_scale: f64,
     pub position_bias_calibration_ned_m: Vector3<f32>,
     pub velocity_bias_calibration_ned_mps: Vector3<f32>,
     pub clock_bias_calibration_m: f32,
@@ -226,9 +233,16 @@ struct AlignedReplaySample {
 struct AlignedScenarioData {
     samples: Vec<AlignedReplaySample>,
     calibrated_alignment_offset_s: f64,
+    calibrated_alignment_scale: f64,
     position_bias_calibration_ned_m: Vector3<f32>,
     velocity_bias_calibration_ned_mps: Vector3<f32>,
     clock_bias_calibration_m: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AlignmentCalibration {
+    offset_s: f64,
+    scale: f64,
 }
 
 pub fn scenario_onset_in_file_seconds(
@@ -288,7 +302,7 @@ fn build_aligned_samples(
 ) -> Result<AlignedScenarioData, TexbatError> {
     let clean = load_navsol_file(&config.clean_navsol_path)?;
     let observed = load_navsol_file(&config.observed_navsol_path)?;
-    let calibrated_alignment_offset_s = calibrate_alignment_offset(config, &clean, &observed);
+    let calibration = calibrate_alignment(config, &clean, &observed);
 
     let home_ecef = *clean
         .ecef_positions_m
@@ -301,7 +315,7 @@ fn build_aligned_samples(
     let mut aligned_samples = Vec::with_capacity(observed.timestamps_s.len());
 
     for (observed_index, observed_timestamp_s) in observed.timestamps_s.iter().enumerate() {
-        let aligned_timestamp_s = *observed_timestamp_s - calibrated_alignment_offset_s;
+        let aligned_timestamp_s = apply_alignment(*observed_timestamp_s, calibration);
         clean_index = nearest_clean_index(&clean.timestamps_s, aligned_timestamp_s, clean_index);
 
         let reference_position_ned_m = ecef_to_local_ned(
@@ -351,7 +365,8 @@ fn build_aligned_samples(
 
     Ok(AlignedScenarioData {
         samples: aligned_samples,
-        calibrated_alignment_offset_s,
+        calibrated_alignment_offset_s: calibration.offset_s,
+        calibrated_alignment_scale: calibration.scale,
         position_bias_calibration_ned_m,
         velocity_bias_calibration_ned_mps,
         clock_bias_calibration_m,
@@ -365,9 +380,12 @@ fn evaluate_aligned_samples(
     ewma_alpha: f32,
 ) -> Result<TexbatScenarioReport, TexbatError> {
     let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha));
+    monitor =
+        monitor.with_clock_bias_persistence(ClockBiasPersistenceConfig::new(0.9, 92.0));
     let mut report = TexbatScenarioReport {
         scenario_name: config.scenario_name.clone(),
         calibrated_alignment_offset_s: aligned_data.calibrated_alignment_offset_s,
+        calibrated_alignment_scale: aligned_data.calibrated_alignment_scale,
         position_bias_calibration_ned_m: aligned_data.position_bias_calibration_ned_m,
         velocity_bias_calibration_ned_mps: aligned_data.velocity_bias_calibration_ned_mps,
         clock_bias_calibration_m: aligned_data.clock_bias_calibration_m,
@@ -540,47 +558,70 @@ fn load_navsol_file(path: &Path) -> Result<NavSolutionSeries, TexbatError> {
     })
 }
 
-fn calibrate_alignment_offset(
+fn calibrate_alignment(
     config: &TexbatScenarioConfig,
     clean: &NavSolutionSeries,
     observed: &NavSolutionSeries,
-) -> f64 {
+) -> AlignmentCalibration {
     if config.alignment_search_window_s <= 0.0 {
-        return config.scenario_offset_from_clean_s;
+        return AlignmentCalibration {
+            offset_s: -config.scenario_offset_from_clean_s,
+            scale: 1.0,
+        };
     }
 
     let Some(spoof_onset_in_observed_file_s) = config.spoof_onset_in_observed_file_s else {
-        return config.scenario_offset_from_clean_s;
+        return AlignmentCalibration {
+            offset_s: -config.scenario_offset_from_clean_s,
+            scale: 1.0,
+        };
     };
 
-    let mut best_offset_s = config.scenario_offset_from_clean_s;
+    let mut best_offset_s = -config.scenario_offset_from_clean_s;
+    let mut best_scale = 1.0;
     let mut best_score = f64::INFINITY;
-    let mut trial_offset_s = config.scenario_offset_from_clean_s - config.alignment_search_window_s;
-    let max_offset_s = config.scenario_offset_from_clean_s + config.alignment_search_window_s;
+    let mut trial_offset_s = -config.scenario_offset_from_clean_s - config.alignment_search_window_s;
+    let max_offset_s = -config.scenario_offset_from_clean_s + config.alignment_search_window_s;
     let step_s = config.alignment_search_step_s.max(0.001);
+    let scale_window = config.alignment_scale_search_window.max(0.0);
+    let scale_step = config.alignment_scale_search_step.max(1.0e-6);
 
     while trial_offset_s <= max_offset_s + 1.0e-9 {
-        let score = alignment_score_for_offset(
-            clean,
-            observed,
-            trial_offset_s,
-            spoof_onset_in_observed_file_s,
-        );
-        if score < best_score {
-            best_score = score;
-            best_offset_s = trial_offset_s;
+        let mut trial_scale = 1.0 - scale_window;
+        let max_scale = 1.0 + scale_window;
+
+        while trial_scale <= max_scale + 1.0e-12 {
+            let score = alignment_score_for_mapping(
+                clean,
+                observed,
+                AlignmentCalibration {
+                    offset_s: trial_offset_s,
+                    scale: trial_scale,
+                },
+                spoof_onset_in_observed_file_s,
+            );
+            if score < best_score {
+                best_score = score;
+                best_offset_s = trial_offset_s;
+                best_scale = trial_scale;
+            }
+
+            trial_scale += scale_step;
         }
 
         trial_offset_s += step_s;
     }
 
-    best_offset_s
+    AlignmentCalibration {
+        offset_s: best_offset_s,
+        scale: best_scale,
+    }
 }
 
-fn alignment_score_for_offset(
+fn alignment_score_for_mapping(
     clean: &NavSolutionSeries,
     observed: &NavSolutionSeries,
-    offset_s: f64,
+    calibration: AlignmentCalibration,
     spoof_onset_in_observed_file_s: f64,
 ) -> f64 {
     let home_ecef = clean.ecef_positions_m[0];
@@ -596,7 +637,7 @@ fn alignment_score_for_offset(
             break;
         }
 
-        let aligned_timestamp_s = *observed_timestamp_s - offset_s;
+        let aligned_timestamp_s = apply_alignment(*observed_timestamp_s, calibration);
         clean_index = nearest_clean_index(&clean.timestamps_s, aligned_timestamp_s, clean_index);
 
         let reference_position_ned_m = ecef_to_local_ned(
@@ -638,6 +679,10 @@ fn alignment_score_for_offset(
         / clock_bias_deltas.len() as f64;
 
     position_spread + 0.2 * clock_bias_spread
+}
+
+fn apply_alignment(observed_timestamp_s: f64, calibration: AlignmentCalibration) -> f64 {
+    observed_timestamp_s * calibration.scale + calibration.offset_s
 }
 
 fn value_at(data: &[f64], rows: usize, row: usize, column: usize) -> f64 {
