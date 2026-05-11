@@ -14,7 +14,8 @@ use crate::{
     ekf_core::state::{ATT_IDX, EskfState, NominalState, StateCovariance},
     statistical_monitor::{
         monitor::{
-            ClockBiasPersistenceConfig, EwmaRiskAccumulator, MonitorError, StatisticalMonitor,
+            ClockBiasPersistenceConfig, EwmaRiskAccumulator, ImmediateTriggerConfig, MonitorError,
+            StatisticalMonitor,
         },
         observation::{ChiSquareThresholdConfig, ClockBiasObservation, GpsObservation, TrustLevel},
     },
@@ -94,6 +95,7 @@ impl TexbatScenarioConfig {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TexbatScenarioReport {
     pub scenario_name: String,
+    pub profile_name: String,
     pub total_samples: u64,
     pub spoof_labeled_samples: u64,
     pub clean_labeled_samples: u64,
@@ -115,6 +117,32 @@ pub struct TexbatScenarioReport {
     pub calibrated_position_std_ned_m: Vector3<f32>,
     pub calibrated_velocity_std_ned_mps: Vector3<f32>,
     pub calibrated_clock_bias_std_m: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct TexbatMonitorProfile {
+    pub profile_name: String,
+    pub ewma_alpha: f32,
+    pub use_clock_bias_observation: bool,
+    pub clock_bias_persistence: Option<ClockBiasPersistenceConfig>,
+    pub immediate_triggers: Option<ImmediateTriggerConfig>,
+}
+
+impl TexbatMonitorProfile {
+    pub fn full(ewma_alpha: f32) -> Self {
+        Self {
+            profile_name: "full".to_owned(),
+            ewma_alpha,
+            use_clock_bias_observation: true,
+            clock_bias_persistence: Some(ClockBiasPersistenceConfig::new(0.9, 92.0)),
+            immediate_triggers: None,
+        }
+    }
+
+    pub fn named(mut self, profile_name: impl Into<String>) -> Self {
+        self.profile_name = profile_name.into();
+        self
+    }
 }
 
 impl TexbatScenarioReport {
@@ -274,8 +302,16 @@ pub fn run_texbat_scenario(
     thresholds: ChiSquareThresholdConfig,
     ewma_alpha: f32,
 ) -> Result<TexbatScenarioReport, TexbatError> {
+    run_texbat_scenario_with_profile(config, thresholds, &TexbatMonitorProfile::full(ewma_alpha))
+}
+
+pub fn run_texbat_scenario_with_profile(
+    config: &TexbatScenarioConfig,
+    thresholds: ChiSquareThresholdConfig,
+    profile: &TexbatMonitorProfile,
+) -> Result<TexbatScenarioReport, TexbatError> {
     let aligned_data = build_aligned_samples(config)?;
-    evaluate_aligned_samples(config, aligned_data, thresholds, ewma_alpha)
+    evaluate_aligned_samples(config, aligned_data, thresholds, profile)
 }
 
 pub fn write_texbat_replay_csv<P: AsRef<Path>>(
@@ -374,8 +410,7 @@ fn build_aligned_samples(
         sample.observed_velocity_ned_mps -= velocity_bias_calibration_ned_mps;
         sample.observed_clock_bias_m -= clock_bias_calibration_m;
     }
-    let empirical_noise_calibration =
-        empirical_noise_calibration(config, &aligned_samples);
+    let empirical_noise_calibration = empirical_noise_calibration(config, &aligned_samples);
 
     Ok(AlignedScenarioData {
         samples: aligned_samples,
@@ -392,12 +427,19 @@ fn evaluate_aligned_samples(
     config: &TexbatScenarioConfig,
     aligned_data: AlignedScenarioData,
     thresholds: ChiSquareThresholdConfig,
-    ewma_alpha: f32,
+    profile: &TexbatMonitorProfile,
 ) -> Result<TexbatScenarioReport, TexbatError> {
-    let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha));
-    monitor = monitor.with_clock_bias_persistence(ClockBiasPersistenceConfig::new(0.9, 92.0));
+    let mut monitor =
+        StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(profile.ewma_alpha));
+    if let Some(clock_bias_persistence) = profile.clock_bias_persistence {
+        monitor = monitor.with_clock_bias_persistence(clock_bias_persistence);
+    }
+    if let Some(immediate_triggers) = profile.immediate_triggers {
+        monitor = monitor.with_immediate_triggers(immediate_triggers);
+    }
     let mut report = TexbatScenarioReport {
         scenario_name: config.scenario_name.clone(),
+        profile_name: profile.profile_name.clone(),
         calibrated_alignment_offset_s: aligned_data.calibrated_alignment_offset_s,
         calibrated_alignment_scale: aligned_data.calibrated_alignment_scale,
         position_bias_calibration_ned_m: aligned_data.position_bias_calibration_ned_m,
@@ -434,6 +476,9 @@ fn evaluate_aligned_samples(
             sample.observed_clock_bias_m,
             aligned_data.empirical_noise_calibration.clock_bias_std_m,
         );
+        let clock_bias_observation = profile
+            .use_clock_bias_observation
+            .then_some(clock_bias_observation);
 
         let started = Instant::now();
         let verdict = monitor
@@ -442,7 +487,7 @@ fn evaluate_aligned_samples(
                 &gps_observation,
                 None,
                 None,
-                Some(&clock_bias_observation),
+                clock_bias_observation.as_ref(),
             )
             .map_err(TexbatError::Monitor)?;
         latencies_us.push(started.elapsed().as_secs_f64() * 1_000_000.0);
@@ -496,7 +541,8 @@ fn gps_observation_with_noise(
     velocity_ned_mps: Vector3<f32>,
     empirical_noise_calibration: EmpiricalNoiseCalibration,
 ) -> GpsObservation {
-    let mut observation_noise = crate::statistical_monitor::observation::ObservationNoiseMatrix::zeros();
+    let mut observation_noise =
+        crate::statistical_monitor::observation::ObservationNoiseMatrix::zeros();
     observation_noise.fixed_view_mut::<3, 3>(0, 0).copy_from(
         &nalgebra::SMatrix::<f32, 3, 3>::from_diagonal(
             &empirical_noise_calibration
@@ -553,8 +599,10 @@ fn empirical_noise_calibration(
     config: &TexbatScenarioConfig,
     samples: &[AlignedReplaySample],
 ) -> EmpiricalNoiseCalibration {
-    let calibration_samples: Vec<&AlignedReplaySample> =
-        samples.iter().filter(|sample| !sample.label_spoofed).collect();
+    let calibration_samples: Vec<&AlignedReplaySample> = samples
+        .iter()
+        .filter(|sample| !sample.label_spoofed)
+        .collect();
     let source = if calibration_samples.is_empty() {
         samples.iter().collect::<Vec<_>>()
     } else {
@@ -641,11 +689,7 @@ fn sample_std_vector3(values: impl Iterator<Item = Vector3<f32>>) -> Vector3<f32
     }
     variance /= collected.len() as f32;
 
-    Vector3::new(
-        variance.x.sqrt(),
-        variance.y.sqrt(),
-        variance.z.sqrt(),
-    )
+    Vector3::new(variance.x.sqrt(), variance.y.sqrt(), variance.z.sqrt())
 }
 
 fn sample_std_scalar(values: impl Iterator<Item = f32>) -> f32 {

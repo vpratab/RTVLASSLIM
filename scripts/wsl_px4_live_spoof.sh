@@ -5,6 +5,10 @@ workspace="/mnt/c/Users/saanvi/Documents/Codex/2026-05-10-build-what-this-thing-
 px4_build_dir="$workspace/external/PX4-Autopilot/build/px4_sitl_sih"
 artifacts_dir="$workspace/artifacts"
 px4_log="/tmp/px4_live_spoof.log"
+immediate_gps_flag="${RTVLAS_IMMEDIATE_GPS_FLAG:-}"
+immediate_gps_reject="${RTVLAS_IMMEDIATE_GPS_REJECT:-}"
+immediate_position_flag="${RTVLAS_IMMEDIATE_POSITION_FLAG:-}"
+immediate_position_reject="${RTVLAS_IMMEDIATE_POSITION_REJECT:-}"
 
 cleanup() {
   if [ -n "${livepid:-}" ]; then
@@ -42,11 +46,28 @@ sleep 6
 
 cd "$workspace" || exit 1
 
+live_args=(
+  --connection udpin:127.0.0.1:18571
+  --skip-handshake
+  --verdict-limit 30
+  --evidence artifacts/wsl_px4_live_spoof_evidence.bin
+)
+
+if [ -n "$immediate_gps_flag" ]; then
+  live_args+=(--immediate-gps-flag "$immediate_gps_flag")
+fi
+if [ -n "$immediate_gps_reject" ]; then
+  live_args+=(--immediate-gps-reject "$immediate_gps_reject")
+fi
+if [ -n "$immediate_position_flag" ]; then
+  live_args+=(--immediate-position-flag "$immediate_position_flag")
+fi
+if [ -n "$immediate_position_reject" ]; then
+  live_args+=(--immediate-position-reject "$immediate_position_reject")
+fi
+
 timeout 25s target/debug/examples/px4_sitl_live \
-  --connection udpin:127.0.0.1:18571 \
-  --skip-handshake \
-  --verdict-limit 30 \
-  --evidence artifacts/wsl_px4_live_spoof_evidence.bin \
+  "${live_args[@]}" \
   > artifacts/wsl_px4_live_spoof_stdout.log \
   2> artifacts/wsl_px4_live_spoof_stderr.log &
 livepid=$!

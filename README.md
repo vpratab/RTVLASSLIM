@@ -21,6 +21,7 @@ Implemented today:
 
 - IMU-driven ESKF-style propagation in local NED coordinates
 - GPS innovation residuals with Mahalanobis distance and EWMA risk accumulation
+- optional immediate trigger gates for large single-epoch GPS residuals
 - auxiliary barometer altitude and heading consistency checks
 - MAVLink UDP ingestion for `HIGHRES_IMU`, `GPS_RAW_INT`, and `GLOBAL_POSITION_INT`
 - signed evidence packets using SHA-256 and Ed25519
@@ -42,7 +43,7 @@ The repository is in the "prototype with measured simulator and processed-data r
 
 - The Rust crate builds cleanly.
 - The core crate still checks with `--no-default-features`.
-- The library test suite currently passes `21/21`.
+- The library test suite currently passes `26/26`.
 - PX4 SIH paths, a live MAVLink spoof proxy, and a processed TEXBAT harness have been exercised locally.
 
 ## Benchmark Snapshot
@@ -86,8 +87,8 @@ Observed on `2026-05-11` using `scripts/wsl_px4_live_spoof.sh`:
 | spoof onset | `1.5 s` |
 | injected position offset | `+90 m north, -50 m east, +8 m down` |
 | injected velocity offset | `+10, -5, +1 m/s` in NED |
-| total packets processed | `341` |
-| IMU packets | `311` |
+| total packets processed | `340` |
+| IMU packets | `310` |
 | GPS packets | `30` |
 | verdicts | `13 trusted / 0 flagged / 17 rejected` |
 | first rejection | verdict `#14` |
@@ -127,6 +128,7 @@ The current evidence supports these narrower statements:
 - the monitor path works end to end on live PX4 SIH telemetry
 - the current residual checks can reject at least one live software-injected MAVLink spoof profile after onset
 - the current processed-TEXBAT harness performs strongly on `ds2`, reduces clean false positives on `ds3`, and remains partial on `ds7`
+- the new TEXBAT ablation runs show that the clock-bias path and persistence logic are carrying most of the detection burden on `ds3`
 
 The current evidence does not support these broader statements:
 
@@ -134,6 +136,46 @@ The current evidence does not support these broader statements:
 - robustness to RF-level spoofing
 - robustness across arbitrary platforms or missions
 - flight-qualified latency or resource claims
+
+## Baseline Comparison
+
+The repository now includes a direct ablation runner:
+
+```powershell
+cargo run --example run_texbat_ablation
+```
+
+Observed on `2026-05-11`:
+
+| Scenario | Profile | Anomaly TPR | Anomaly FPR | What it shows |
+| --- | --- | ---: | ---: | --- |
+| `ds2` | `full` | `0.978` | `0.034` | current full monitor operating point |
+| `ds2` | `single_epoch_gps_clock` | `0.979` | `0.033` | persistence matters less on this easier processed case |
+| `ds2` | `single_epoch_gps_only` | `0.000` | `0.016` | GPS-only residuals do not carry the detection here |
+| `ds3` | `full` | `0.749` | `0.032` | current best processed result on the hardest case here |
+| `ds3` | `no_persistence` | `0.000` | `0.032` | removing clock-bias persistence collapses detection on `ds3` |
+| `ds3` | `single_epoch_gps_clock` | `0.000` | `0.030` | single-epoch clock checks alone are also insufficient on `ds3` |
+| `ds7` | `full` | `0.705` | `0.000` | current partial-detection result |
+| `ds7` | `no_persistence` | `0.662` | `0.000` | persistence helps, but less dramatically than on `ds3` |
+| `ds7` | `single_epoch_gps_only` | `0.000` | `0.000` | the GPS-only baseline again fails completely here |
+
+This does not prove the architecture is globally optimal, but it does answer one basic question: the clock-bias path and its persistence logic are materially responsible for the harder processed-replay detections.
+
+## Evidence Verification
+
+The repository now includes a standalone verifier for the framed `FileSink` output:
+
+```powershell
+cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin
+```
+
+Observed on `2026-05-11` against the live PX4 spoof evidence file:
+
+- packets verified: `30`
+- trusted verdicts: `13`
+- flagged/rejected verdicts: `17`
+
+This verifies the signed evidence stream outside the main orchestrator loop using a separate program.
 
 ## Verification
 
@@ -145,6 +187,8 @@ cargo check --no-default-features --lib
 cargo check --all-targets
 cargo test --lib
 cargo check --examples
+cargo run --example run_texbat_ablation
+cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin
 ```
 
 WSL2 PX4 paths used locally:
@@ -161,6 +205,7 @@ Processed TEXBAT path used locally:
 ```powershell
 .\scripts\download_texbat_processed.ps1
 cargo run --example run_texbat_harness
+cargo run --example run_texbat_ablation
 ```
 
 More detail:
@@ -195,6 +240,14 @@ The most important remaining work is external validation, not more framing:
 3. stronger spoof scenario coverage
 4. hardware or flight-controller deployment path
 5. hardware or field validation
+
+## Startup Coverage
+
+The library tests now explicitly cover:
+
+- first nonzero IMU timestamp bootstrap
+- out-of-order IMU rejection
+- GPS arriving before the first recorded IMU state in the orchestrator
 
 ## License
 

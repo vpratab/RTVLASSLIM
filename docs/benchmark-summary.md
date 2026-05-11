@@ -53,6 +53,36 @@ The goal is to separate:
 | `ds3` | `956 / 4 / 1136` | `0.749` | `0.032` | `0.749` | `0.025` | `182.10 us` | `222.30 us` | `622.00 us` |
 | `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `177.97 us` | `186.00 us` | `422.90 us` |
 
+### TEXBAT Ablation Snapshot
+
+| Scenario | Profile | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `ds2` | `full` | `0.978` | `0.034` | `0.975` | `0.020` |
+| `ds2` | `single_epoch_gps_clock` | `0.979` | `0.033` | `0.969` | `0.018` |
+| `ds2` | `single_epoch_gps_only` | `0.000` | `0.016` | `0.000` | `0.007` |
+| `ds3` | `full` | `0.749` | `0.032` | `0.749` | `0.025` |
+| `ds3` | `no_persistence` | `0.000` | `0.032` | `0.000` | `0.025` |
+| `ds3` | `single_epoch_gps_clock` | `0.000` | `0.030` | `0.000` | `0.025` |
+| `ds7` | `full` | `0.705` | `0.000` | `0.705` | `0.000` |
+| `ds7` | `no_persistence` | `0.662` | `0.000` | `0.615` | `0.000` |
+| `ds7` | `single_epoch_gps_only` | `0.000` | `0.000` | `0.000` | `0.000` |
+
+The strongest takeaway from this table is that the harder processed-TEXBAT detections are not coming from plain GPS residual thresholds alone. On `ds3`, removing clock-bias persistence drops anomaly TPR from `0.749` to `0.000` at roughly the same false-positive rate.
+
+### Evidence Verification
+
+The framed evidence file emitted by the live PX4 spoof path was rechecked with:
+
+```powershell
+cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin
+```
+
+Observed on `2026-05-11`:
+
+- packets verified: `30`
+- trusted verdicts: `13`
+- flagged/rejected verdicts: `17`
+
 ## Limitations
 
 ### PX4 SIH Paths
@@ -69,6 +99,7 @@ The goal is to separate:
 - clean trajectory is used as a reference proxy
 - replay noise is now calibrated from the pre-spoof clean segment rather than relying only on fixed observation-noise assumptions
 - `ds3` still remains a partial-detection case, even though its clean false positives are substantially lower than in the earlier fixed-noise proxy
+- the optional immediate trigger hooks are implemented, but they did not materially move the first-rejection point in the current live PX4 spoof profile when trialed locally
 
 ## Reviewer Guidance
 

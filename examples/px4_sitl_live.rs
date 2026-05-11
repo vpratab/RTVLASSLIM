@@ -7,7 +7,7 @@ use rtvlas::{
     ekf_core::state::{EskfState, ImuNoiseModel, NominalState, PredictConfig, StateCovariance},
     orchestrator::{FileSink, Orchestrator},
     statistical_monitor::{
-        monitor::{EwmaRiskAccumulator, StatisticalMonitor},
+        monitor::{EwmaRiskAccumulator, ImmediateTriggerConfig, StatisticalMonitor},
         observation::ChiSquareThresholdConfig,
     },
     telemetry_adapter::MavlinkSubscriber,
@@ -34,6 +34,10 @@ fn run() -> Result<(), String> {
     let evidence_path = argument_value("--evidence")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("artifacts/px4_sitl_evidence.bin"));
+    let immediate_gps_flag_threshold = optional_f32_argument("--immediate-gps-flag")?;
+    let immediate_gps_reject_threshold = optional_f32_argument("--immediate-gps-reject")?;
+    let immediate_position_flag_threshold = optional_f32_argument("--immediate-position-flag")?;
+    let immediate_position_reject_threshold = optional_f32_argument("--immediate-position-reject")?;
 
     if let Some(parent_directory) = evidence_path.parent() {
         std::fs::create_dir_all(parent_directory).map_err(|error| error.to_string())?;
@@ -66,7 +70,12 @@ fn run() -> Result<(), String> {
         subscriber,
         initial_eskf_state(),
         predict_config(),
-        monitor(),
+        monitor(
+            immediate_gps_flag_threshold,
+            immediate_gps_reject_threshold,
+            immediate_position_flag_threshold,
+            immediate_position_reject_threshold,
+        ),
         attestation_provider,
         evidence_sink,
     );
@@ -160,11 +169,35 @@ fn predict_config() -> PredictConfig {
     )
 }
 
-fn monitor() -> StatisticalMonitor {
-    StatisticalMonitor::new(
+fn monitor(
+    immediate_gps_flag_threshold: Option<f32>,
+    immediate_gps_reject_threshold: Option<f32>,
+    immediate_position_flag_threshold: Option<f32>,
+    immediate_position_reject_threshold: Option<f32>,
+) -> StatisticalMonitor {
+    let monitor = StatisticalMonitor::new(
         ChiSquareThresholdConfig::new(12.592, 22.458),
         EwmaRiskAccumulator::new(0.6),
-    )
+    );
+
+    if immediate_gps_flag_threshold.is_some()
+        || immediate_gps_reject_threshold.is_some()
+        || immediate_position_flag_threshold.is_some()
+        || immediate_position_reject_threshold.is_some()
+    {
+        monitor.with_immediate_triggers(
+            ImmediateTriggerConfig::gps_only(
+                immediate_gps_flag_threshold,
+                immediate_gps_reject_threshold,
+            )
+            .with_position_residual_thresholds(
+                immediate_position_flag_threshold,
+                immediate_position_reject_threshold,
+            ),
+        )
+    } else {
+        monitor
+    }
 }
 
 fn argument_value(flag: &str) -> Option<String> {
@@ -179,4 +212,10 @@ fn argument_value(flag: &str) -> Option<String> {
 
 fn flag_present(flag: &str) -> bool {
     std::env::args().skip(1).any(|argument| argument == flag)
+}
+
+fn optional_f32_argument(flag: &str) -> Result<Option<f32>, String> {
+    argument_value(flag)
+        .map(|value| value.parse::<f32>().map_err(|error| error.to_string()))
+        .transpose()
 }

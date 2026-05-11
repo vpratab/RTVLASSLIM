@@ -55,6 +55,56 @@ impl ClockBiasPersistenceConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImmediateTriggerConfig {
+    pub gps_flag_squared_mahalanobis_threshold: Option<f32>,
+    pub gps_reject_squared_mahalanobis_threshold: Option<f32>,
+    pub total_flag_squared_mahalanobis_threshold: Option<f32>,
+    pub total_reject_squared_mahalanobis_threshold: Option<f32>,
+    pub position_residual_flag_threshold_m: Option<f32>,
+    pub position_residual_reject_threshold_m: Option<f32>,
+}
+
+impl ImmediateTriggerConfig {
+    pub const fn new(
+        gps_flag_squared_mahalanobis_threshold: Option<f32>,
+        gps_reject_squared_mahalanobis_threshold: Option<f32>,
+        total_flag_squared_mahalanobis_threshold: Option<f32>,
+        total_reject_squared_mahalanobis_threshold: Option<f32>,
+    ) -> Self {
+        Self {
+            gps_flag_squared_mahalanobis_threshold,
+            gps_reject_squared_mahalanobis_threshold,
+            total_flag_squared_mahalanobis_threshold,
+            total_reject_squared_mahalanobis_threshold,
+            position_residual_flag_threshold_m: None,
+            position_residual_reject_threshold_m: None,
+        }
+    }
+
+    pub const fn gps_only(
+        gps_flag_squared_mahalanobis_threshold: Option<f32>,
+        gps_reject_squared_mahalanobis_threshold: Option<f32>,
+    ) -> Self {
+        Self::new(
+            gps_flag_squared_mahalanobis_threshold,
+            gps_reject_squared_mahalanobis_threshold,
+            None,
+            None,
+        )
+    }
+
+    pub const fn with_position_residual_thresholds(
+        mut self,
+        position_residual_flag_threshold_m: Option<f32>,
+        position_residual_reject_threshold_m: Option<f32>,
+    ) -> Self {
+        self.position_residual_flag_threshold_m = position_residual_flag_threshold_m;
+        self.position_residual_reject_threshold_m = position_residual_reject_threshold_m;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct ClockBiasPersistenceState {
     config: ClockBiasPersistenceConfig,
     score: f32,
@@ -80,6 +130,7 @@ pub struct StatisticalMonitor {
     thresholds: ChiSquareThresholdConfig,
     risk_accumulator: EwmaRiskAccumulator,
     clock_bias_persistence: Option<ClockBiasPersistenceState>,
+    immediate_triggers: Option<ImmediateTriggerConfig>,
 }
 
 impl StatisticalMonitor {
@@ -91,11 +142,17 @@ impl StatisticalMonitor {
             thresholds,
             risk_accumulator,
             clock_bias_persistence: None,
+            immediate_triggers: None,
         }
     }
 
     pub fn with_clock_bias_persistence(mut self, config: ClockBiasPersistenceConfig) -> Self {
         self.clock_bias_persistence = Some(ClockBiasPersistenceState::new(config));
+        self
+    }
+
+    pub fn with_immediate_triggers(mut self, config: ImmediateTriggerConfig) -> Self {
+        self.immediate_triggers = Some(config);
         self
     }
 
@@ -241,6 +298,15 @@ impl StatisticalMonitor {
             + heading_squared_mahalanobis_distance.unwrap_or(0.0)
             + clock_bias_squared_mahalanobis_distance.unwrap_or(0.0);
         let accumulated_risk = self.risk_accumulator.update(squared_mahalanobis_distance);
+        let (immediate_flag_triggered, immediate_reject_triggered) = match self.immediate_triggers {
+            Some(config) => evaluate_immediate_triggers(
+                config,
+                gps_squared_mahalanobis_distance,
+                squared_mahalanobis_distance,
+                innovation.fixed_rows::<3>(0).norm(),
+            ),
+            None => (false, false),
+        };
         let persistent_clock_reject =
             match (self.clock_bias_persistence, clock_bias_persistent_score) {
                 (Some(persistence_state), Some(score)) => {
@@ -248,8 +314,13 @@ impl StatisticalMonitor {
                 }
                 _ => false,
             };
-        let trust_level =
-            classify_trust_level(accumulated_risk, self.thresholds, persistent_clock_reject);
+        let trust_level = classify_trust_level(
+            accumulated_risk,
+            self.thresholds,
+            persistent_clock_reject,
+            immediate_flag_triggered,
+            immediate_reject_triggered,
+        );
 
         Ok(MonitorVerdict {
             squared_mahalanobis_distance,
@@ -366,14 +437,47 @@ fn classify_trust_level(
     accumulated_risk: f32,
     thresholds: ChiSquareThresholdConfig,
     persistent_clock_reject: bool,
+    immediate_flag_triggered: bool,
+    immediate_reject_triggered: bool,
 ) -> TrustLevel {
-    if persistent_clock_reject || accumulated_risk >= thresholds.rejected_risk_threshold {
+    if persistent_clock_reject
+        || immediate_reject_triggered
+        || accumulated_risk >= thresholds.rejected_risk_threshold
+    {
         TrustLevel::Rejected
-    } else if accumulated_risk >= thresholds.flagged_risk_threshold {
+    } else if immediate_flag_triggered || accumulated_risk >= thresholds.flagged_risk_threshold {
         TrustLevel::Flagged
     } else {
         TrustLevel::Trusted
     }
+}
+
+fn evaluate_immediate_triggers(
+    config: ImmediateTriggerConfig,
+    gps_squared_mahalanobis_distance: f32,
+    total_squared_mahalanobis_distance: f32,
+    position_residual_norm_m: f32,
+) -> (bool, bool) {
+    let immediate_flag_triggered = config
+        .gps_flag_squared_mahalanobis_threshold
+        .is_some_and(|threshold| gps_squared_mahalanobis_distance >= threshold)
+        || config
+            .total_flag_squared_mahalanobis_threshold
+            .is_some_and(|threshold| total_squared_mahalanobis_distance >= threshold)
+        || config
+            .position_residual_flag_threshold_m
+            .is_some_and(|threshold| position_residual_norm_m >= threshold);
+    let immediate_reject_triggered = config
+        .gps_reject_squared_mahalanobis_threshold
+        .is_some_and(|threshold| gps_squared_mahalanobis_distance >= threshold)
+        || config
+            .total_reject_squared_mahalanobis_threshold
+            .is_some_and(|threshold| total_squared_mahalanobis_distance >= threshold)
+        || config
+            .position_residual_reject_threshold_m
+            .is_some_and(|threshold| position_residual_norm_m >= threshold);
+
+    (immediate_flag_triggered, immediate_reject_triggered)
 }
 
 fn scalar_innovation_variance(
@@ -423,7 +527,9 @@ fn wrap_angle_pi(mut angle_rad: f32) -> f32 {
 mod tests {
     use nalgebra::{UnitQuaternion, Vector3};
 
-    use super::{ClockBiasPersistenceConfig, EwmaRiskAccumulator, StatisticalMonitor};
+    use super::{
+        ClockBiasPersistenceConfig, EwmaRiskAccumulator, ImmediateTriggerConfig, StatisticalMonitor,
+    };
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
         statistical_monitor::observation::{
@@ -595,5 +701,40 @@ mod tests {
         }
 
         assert_eq!(last_trust_level, TrustLevel::Rejected);
+    }
+
+    #[test]
+    fn immediate_gps_trigger_rejects_large_jump_before_ewma_accumulates() {
+        let nominal = NominalState {
+            timestamp_s: 5.0,
+            position_ned_m: Vector3::zeros(),
+            velocity_ned_mps: Vector3::zeros(),
+            attitude_body_to_ned: UnitQuaternion::identity(),
+            accel_bias_mps2: Vector3::zeros(),
+            gyro_bias_rps: Vector3::zeros(),
+            geodetic_reference: None,
+        };
+        let predicted_state = EskfState::new(nominal, StateCovariance::identity() * 1.0e-3);
+        let gps_observation = GpsObservation::from_accuracy_metrics(
+            5.1,
+            Vector3::new(50.0, -25.0, 6.0),
+            Vector3::new(6.0, -3.0, 0.5),
+            1.5,
+            2.0,
+            0.3,
+            0.5,
+        );
+        let thresholds = ChiSquareThresholdConfig::new(12.592, 22.458);
+        let risk_accumulator = EwmaRiskAccumulator::new(0.005);
+        let mut monitor = StatisticalMonitor::new(thresholds, risk_accumulator)
+            .with_immediate_triggers(ImmediateTriggerConfig::gps_only(Some(64.0), Some(144.0)));
+
+        let verdict = monitor
+            .evaluate_gps_observation(&predicted_state, &gps_observation)
+            .unwrap();
+
+        assert!(verdict.accumulated_risk < thresholds.rejected_risk_threshold);
+        assert!(verdict.gps_squared_mahalanobis_distance >= 144.0);
+        assert_eq!(verdict.trust_level, TrustLevel::Rejected);
     }
 }

@@ -420,6 +420,7 @@ mod tests {
         events: VecDeque<TelemetryUpdate>,
         pending_gps_samples: VecDeque<SynchronizedGpsSample>,
         gps_ready: bool,
+        has_recorded_state: bool,
     }
 
     impl SyntheticTelemetrySource {
@@ -431,6 +432,7 @@ mod tests {
                 events,
                 pending_gps_samples,
                 gps_ready: false,
+                has_recorded_state: false,
             }
         }
     }
@@ -448,6 +450,7 @@ mod tests {
         }
 
         fn record_predicted_state(&mut self, state: &EskfState) {
+            self.has_recorded_state = true;
             if let Some(pending_sample) = self.pending_gps_samples.front_mut() {
                 pending_sample.aligned_predicted_state = state.clone();
             }
@@ -456,7 +459,7 @@ mod tests {
         fn try_dequeue_synchronized_gps(
             &mut self,
         ) -> Result<Option<SynchronizedGpsSample>, TelemetryError> {
-            if !self.gps_ready {
+            if !self.gps_ready || !self.has_recorded_state {
                 return Ok(None);
             }
 
@@ -560,6 +563,93 @@ mod tests {
         assert_eq!(report.verdicts_emitted, 1);
         assert_eq!(report.rejected_verdicts, 1);
         assert_eq!(report.rejected_percentage(), 100.0);
+    }
+
+    #[test]
+    fn gps_before_first_imu_waits_for_state_before_emitting_evidence() {
+        let mut gps_frame = MavlinkFrameBuffer::new();
+        gps_frame
+            .extend_from_slice(&[0xFD, 0x21, 0x02, 0x33, 0x44, 0x55])
+            .unwrap();
+        let mut imu_frame = MavlinkFrameBuffer::new();
+        imu_frame
+            .extend_from_slice(&[0xFD, 0x15, 0x01, 0x69])
+            .unwrap();
+
+        let events = VecDeque::from([
+            TelemetryUpdate::GpsObservationQueued {
+                timestamp_s: 0.01,
+                queue_depth: 1,
+            },
+            TelemetryUpdate::Imu {
+                sample: ImuSample::new(0.01, Vector3::new(0.0, 0.0, -9.80665), Vector3::zeros()),
+                raw_frame: imu_frame,
+            },
+        ]);
+        let pending_gps_samples = VecDeque::from([SynchronizedGpsSample {
+            timestamp_ns: 1_725_897_123_456_789_000,
+            gps_observation: GpsObservation::from_accuracy_metrics(
+                0.01,
+                Vector3::new(120.0, -85.0, 18.0),
+                Vector3::new(12.0, -7.0, 2.0),
+                1.5,
+                2.0,
+                0.4,
+                0.5,
+            ),
+            barometer_observation: None,
+            heading_observation: None,
+            aligned_predicted_state: EskfState::default(),
+            raw_frame: gps_frame,
+        }]);
+        let telemetry_source = SyntheticTelemetrySource::new(events, pending_gps_samples);
+
+        let initial_state = EskfState::new(
+            NominalState {
+                timestamp_s: 0.0,
+                position_ned_m: Vector3::zeros(),
+                velocity_ned_mps: Vector3::zeros(),
+                attitude_body_to_ned: UnitQuaternion::identity(),
+                accel_bias_mps2: Vector3::zeros(),
+                gyro_bias_rps: Vector3::zeros(),
+                geodetic_reference: None,
+            },
+            StateCovariance::identity() * 1.0e-3,
+        );
+        let predict_config = PredictConfig::new(
+            Vector3::new(0.0, 0.0, 9.80665),
+            0.02,
+            ImuNoiseModel::new(
+                Vector3::new(0.05, 0.05, 0.05),
+                Vector3::new(0.002, 0.002, 0.002),
+                Vector3::new(0.0002, 0.0002, 0.0002),
+                Vector3::new(0.00002, 0.00002, 0.00002),
+            ),
+        );
+        let monitor = StatisticalMonitor::new(
+            ChiSquareThresholdConfig::new(12.592, 22.458),
+            EwmaRiskAccumulator::new(1.0),
+        );
+        let secure_element = MockSecureElement::from_secret_key_bytes([8_u8; 32]);
+        let attestation_provider = Ed25519AttestationProvider::new(secure_element);
+        let evidence_sink = RecordingSink::new();
+
+        let mut orchestrator = Orchestrator::new(
+            telemetry_source,
+            initial_state,
+            predict_config,
+            monitor,
+            attestation_provider,
+            evidence_sink,
+        );
+
+        let first_step = orchestrator.step().unwrap();
+        assert_eq!(first_step, StepOutcome::no_evidence());
+        assert_eq!(orchestrator.mission_report().verdicts_emitted, 0);
+
+        let second_step = orchestrator.step().unwrap();
+        assert!(second_step.evidence_emitted);
+        assert_eq!(orchestrator.mission_report().verdicts_emitted, 1);
     }
 
     #[test]

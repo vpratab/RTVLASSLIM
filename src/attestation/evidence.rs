@@ -59,6 +59,16 @@ pub struct SignedEvidencePacket {
     pub public_key: [u8; 32],
 }
 
+#[cfg(feature = "std")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FramedEvidenceSummary {
+    pub total_packets: u64,
+    pub trusted_verdicts: u64,
+    pub flagged_or_rejected_verdicts: u64,
+    pub first_timestamp_ns: Option<u64>,
+    pub last_timestamp_ns: Option<u64>,
+}
+
 pub trait SecureElement {
     fn public_key_bytes(&self) -> [u8; 32];
     fn sign_bytes(&self, message: &[u8]) -> Result<[u8; 64], AttestationError>;
@@ -113,6 +123,12 @@ pub enum AttestationError {
     Serialization(postcard::Error),
     InvalidVerifyingKey,
     SignatureVerificationFailed,
+    #[cfg(feature = "std")]
+    FramedEvidenceTruncated {
+        offset: usize,
+        expected_bytes: usize,
+        available_bytes: usize,
+    },
     SecureElementConfiguration {
         reason: &'static str,
     },
@@ -133,6 +149,15 @@ impl fmt::Display for AttestationError {
             Self::SignatureVerificationFailed => {
                 write!(f, "evidence signature verification failed")
             }
+            #[cfg(feature = "std")]
+            Self::FramedEvidenceTruncated {
+                offset,
+                expected_bytes,
+                available_bytes,
+            } => write!(
+                f,
+                "framed evidence stream truncated at byte {offset}: expected {expected_bytes} bytes, found {available_bytes}"
+            ),
             Self::SecureElementConfiguration { reason } => {
                 write!(f, "mock secure element configuration error: {reason}")
             }
@@ -175,6 +200,82 @@ pub fn serialize_evidence<'a>(
 
 pub fn deserialize_evidence(bytes: &[u8]) -> Result<SignedEvidencePacket, AttestationError> {
     postcard::from_bytes(bytes).map_err(AttestationError::Serialization)
+}
+
+#[cfg(feature = "std")]
+pub fn decode_framed_evidence_bytes(
+    bytes: &[u8],
+) -> Result<Vec<SignedEvidencePacket>, AttestationError> {
+    let mut offset = 0_usize;
+    let mut packets = Vec::new();
+
+    while offset < bytes.len() {
+        let prefix_end = offset + 4;
+        if prefix_end > bytes.len() {
+            return Err(AttestationError::FramedEvidenceTruncated {
+                offset,
+                expected_bytes: 4,
+                available_bytes: bytes.len().saturating_sub(offset),
+            });
+        }
+
+        let packet_length = u32::from_le_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize;
+        offset = prefix_end;
+
+        let packet_end = offset + packet_length;
+        if packet_end > bytes.len() {
+            return Err(AttestationError::FramedEvidenceTruncated {
+                offset,
+                expected_bytes: packet_length,
+                available_bytes: bytes.len().saturating_sub(offset),
+            });
+        }
+
+        packets.push(deserialize_evidence(&bytes[offset..packet_end])?);
+        offset = packet_end;
+    }
+
+    Ok(packets)
+}
+
+#[cfg(feature = "std")]
+pub fn verify_framed_evidence_bytes(
+    bytes: &[u8],
+) -> Result<FramedEvidenceSummary, AttestationError> {
+    let packets = decode_framed_evidence_bytes(bytes)?;
+    let mut summary = FramedEvidenceSummary::default();
+
+    for packet in packets {
+        verify_evidence(&packet)?;
+        summary.total_packets += 1;
+        if packet.evidence.physics_verdict {
+            summary.trusted_verdicts += 1;
+        } else {
+            summary.flagged_or_rejected_verdicts += 1;
+        }
+
+        summary.first_timestamp_ns = Some(
+            summary
+                .first_timestamp_ns
+                .map_or(packet.evidence.timestamp_ns, |current| {
+                    current.min(packet.evidence.timestamp_ns)
+                }),
+        );
+        summary.last_timestamp_ns = Some(
+            summary
+                .last_timestamp_ns
+                .map_or(packet.evidence.timestamp_ns, |current| {
+                    current.max(packet.evidence.timestamp_ns)
+                }),
+        );
+    }
+
+    Ok(summary)
 }
 
 mod signature_bytes_serde {
@@ -271,7 +372,7 @@ mod tests {
 
     use super::{
         AttestationProvider, Ed25519AttestationProvider, EvidencePacket, SecureElement,
-        verify_evidence,
+        decode_framed_evidence_bytes, verify_evidence, verify_framed_evidence_bytes,
     };
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
@@ -328,6 +429,41 @@ mod tests {
         assert!(verify_evidence(&signed_evidence).is_err());
     }
 
+    #[test]
+    fn framed_evidence_stream_round_trips_and_verifies() {
+        let secure_element = InMemorySecureElement::new([3_u8; 32]);
+        let provider = Ed25519AttestationProvider::new(secure_element);
+        let signed_evidence_a = provider
+            .sign_evidence(&build_evidence_packet(TrustLevel::Trusted))
+            .unwrap();
+        let signed_evidence_b = provider
+            .sign_evidence(&build_evidence_packet(TrustLevel::Rejected))
+            .unwrap();
+
+        let bytes = framed_bytes(&[signed_evidence_a.clone(), signed_evidence_b.clone()]);
+        let restored = decode_framed_evidence_bytes(&bytes).unwrap();
+        let summary = verify_framed_evidence_bytes(&bytes).unwrap();
+
+        assert_eq!(restored, vec![signed_evidence_a, signed_evidence_b]);
+        assert_eq!(summary.total_packets, 2);
+        assert_eq!(summary.trusted_verdicts, 1);
+        assert_eq!(summary.flagged_or_rejected_verdicts, 1);
+    }
+
+    #[test]
+    fn framed_evidence_stream_rejects_tampering() {
+        let secure_element = InMemorySecureElement::new([4_u8; 32]);
+        let provider = Ed25519AttestationProvider::new(secure_element);
+        let signed_evidence = provider
+            .sign_evidence(&build_evidence_packet(TrustLevel::Trusted))
+            .unwrap();
+        let mut bytes = framed_bytes(&[signed_evidence]);
+        let final_payload_index = bytes.len() - 1;
+        bytes[final_payload_index] ^= 0x01;
+
+        assert!(verify_framed_evidence_bytes(&bytes).is_err());
+    }
+
     fn build_evidence_packet(trust_level: TrustLevel) -> EvidencePacket {
         let predicted_state = EskfState::new(
             NominalState {
@@ -374,5 +510,16 @@ mod tests {
             &predicted_state,
             &monitor_verdict,
         )
+    }
+
+    fn framed_bytes(packets: &[super::SignedEvidencePacket]) -> Vec<u8> {
+        let mut output = Vec::new();
+        for packet in packets {
+            let mut buffer = [0_u8; 384];
+            let encoded = postcard::to_slice(packet, &mut buffer).unwrap();
+            output.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+            output.extend_from_slice(&encoded);
+        }
+        output
     }
 }

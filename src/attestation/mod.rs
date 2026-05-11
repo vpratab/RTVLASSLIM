@@ -7,6 +7,11 @@ pub use evidence::{
 };
 
 #[cfg(feature = "std")]
+pub use evidence::{
+    FramedEvidenceSummary, decode_framed_evidence_bytes, verify_framed_evidence_bytes,
+};
+
+#[cfg(feature = "std")]
 pub use secure_element::MockSecureElement;
 
 #[cfg(feature = "std")]
