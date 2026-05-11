@@ -38,7 +38,8 @@ fn run() -> Result<(), String> {
             0.0,
             None,
         ),
-        TexbatScenarioConfig::new(
+        {
+            let mut config = TexbatScenarioConfig::new(
             "ds2",
             clean_navsol.clone(),
             texbat_dir.join("ds2_navsol.mat"),
@@ -47,8 +48,12 @@ fn run() -> Result<(), String> {
                 TEXBAT_SCENARIO_2_OFFSET_FROM_CLEAN_S,
                 TEXBAT_SCENARIO_2_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
             )),
-        ),
-        TexbatScenarioConfig::new(
+            );
+            config.alignment_search_window_s = 5.0;
+            config
+        },
+        {
+            let mut config = TexbatScenarioConfig::new(
             "ds3",
             clean_navsol.clone(),
             texbat_dir.join("ds3_navsol.mat"),
@@ -57,8 +62,12 @@ fn run() -> Result<(), String> {
                 TEXBAT_SCENARIO_3_OFFSET_FROM_CLEAN_S,
                 TEXBAT_SCENARIO_3_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
             )),
-        ),
-        TexbatScenarioConfig::new(
+            );
+            config.alignment_search_window_s = 5.0;
+            config
+        },
+        {
+            let mut config = TexbatScenarioConfig::new(
             "ds7",
             clean_navsol,
             texbat_dir.join("ds7_navsol.mat"),
@@ -67,7 +76,10 @@ fn run() -> Result<(), String> {
                 TEXBAT_SCENARIO_7_OFFSET_FROM_CLEAN_S,
                 TEXBAT_SCENARIO_7_SPOOF_ONSET_AFTER_SCENARIO_2_START_S,
             )),
-        ),
+            );
+            config.alignment_search_window_s = 1.0;
+            config
+        },
     ];
     let thresholds = ChiSquareThresholdConfig::new(12.592, 22.458);
     let ewma_alpha = 0.6;
@@ -100,6 +112,10 @@ fn run() -> Result<(), String> {
             report.mean_evaluation_latency_us,
             report.p95_evaluation_latency_us,
             report.max_evaluation_latency_us
+        );
+        println!(
+            "  calibrated clean alignment offset (s): {:.6}",
+            report.calibrated_alignment_offset_s
         );
         println!(
             "  calibration position bias NED (m): {:.2}, {:.2}, {:.2}",

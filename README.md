@@ -105,15 +105,18 @@ The live PX4 verification that has actually been run is narrow and specific:
   - spoofed replay dataset: `0/0/60` trusted/flagged/rejected, anomaly TPR/FPR `1.000/0.000`, rejected TPR/FPR `1.000/0.000`
   - nominal evaluation latency mean/p95/max: `333.17 / 377.31 / 935.51 us`
   - spoofed evaluation latency mean/p95/max: `312.32 / 334.31 / 382.50 us`
-- `cargo run --example run_texbat_harness` was run on `2026-05-10` against the downloaded processed TEXBAT `cleanStatic`, `ds2`, `ds3`, and `ds7` `navsol.mat` files. The harness uses the timing offsets and spoof-onset timings published in the 2016 TEXBAT analysis paper to align the clean and spoofed traces, calibrates constant pre-spoof receiver bias, and then replays the aligned solutions through the monitor with an added clock-bias residual. The observed results were:
-  - `cleanStatic-baseline`: `2115/0/0` trusted/flagged/rejected, anomaly FPR `0.000`, rejected FPR `0.000`, latency mean/p95/max `177.54 / 186.00 / 389.00 us`
-  - `ds2`: `512/25/1563` trusted/flagged/rejected, anomaly TPR/FPR `0.988/0.103`, rejected TPR/FPR `0.979/0.085`, latency mean/p95/max `179.92 / 190.50 / 307.00 us`
-  - `ds3`: `2027/20/49` trusted/flagged/rejected, anomaly TPR/FPR `0.000/0.115`, rejected TPR/FPR `0.000/0.082`, latency mean/p95/max `179.42 / 186.80 / 488.00 us`
-  - `ds7`: `1106/77/992` trusted/flagged/rejected, anomaly TPR/FPR `0.664/0.000`, rejected TPR/FPR `0.616/0.000`, latency mean/p95/max `183.60 / 219.20 / 421.60 us`
 
-Those numbers are narrow and should be read narrowly: they come from PX4 SIH telemetry captured in WSL2 and a synthetic GPS spoof injected into the captured dataset by this repository's own benchmark tooling. They are not TEXBAT results, not a live adversarial spoofing test, and not a claim about general real-world performance.
+Those PX4 numbers are narrow and should be read narrowly: they come from PX4 SIH telemetry captured in WSL2 and a synthetic GPS spoof injected into the captured dataset by this repository's own benchmark tooling. They are not a live adversarial spoofing test and not a claim about general real-world performance.
+
+- `cargo run --example run_texbat_harness` was run on `2026-05-10` against the downloaded processed TEXBAT `cleanStatic`, `ds2`, `ds3`, and `ds7` `navsol.mat` files. The harness uses the timing offsets and spoof-onset timings published in the 2016 TEXBAT analysis paper to align the clean and spoofed traces, calibrates constant pre-spoof receiver bias, and then replays the aligned solutions through the monitor with an added clock-bias residual. The observed results were:
+  - `cleanStatic-baseline`: `2115/0/0` trusted/flagged/rejected, anomaly FPR `0.000`, rejected FPR `0.000`, latency mean/p95/max `191.77 / 248.90 / 648.20 us`, calibrated clean-alignment offset `0.000000 s`
+  - `ds2`: `513/21/1566` trusted/flagged/rejected, anomaly TPR/FPR `0.988/0.103`, rejected TPR/FPR `0.978/0.093`, latency mean/p95/max `179.26 / 185.00 / 305.20 us`, calibrated clean-alignment offset `-2.003082 s`
+  - `ds3`: `2030/16/50` trusted/flagged/rejected, anomaly TPR/FPR `0.000/0.110`, rejected TPR/FPR `0.000/0.083`, latency mean/p95/max `178.04 / 186.10 / 248.30 us`, calibrated clean-alignment offset `-1.096679 s`
+  - `ds7`: `1106/77/992` trusted/flagged/rejected, anomaly TPR/FPR `0.664/0.000`, rejected TPR/FPR `0.616/0.000`, latency mean/p95/max `180.42 / 197.50 / 329.20 us`, calibrated clean-alignment offset `-0.050000 s`
 
 The TEXBAT numbers are also narrow and should be read narrowly: they come from the UT processed `navsol.mat` products, not the 40+ GB raw IF captures, and this repository does not have paired IMU data for TEXBAT. The harness therefore uses the clean TEXBAT navigation solution as a reference trajectory proxy instead of replaying a true IMU-driven dead-reckoning path. That makes the TEXBAT results useful as an external sanity check, but not a full end-to-end claim for the live MAVLink product path.
+
+The automatic clean-alignment calibration slightly improves scenario replay consistency, but it does not change the main qualitative outcome: this monitor performs strongly on `ds2`, partially on `ds7`, and still poorly on `ds3` when limited to processed `navsol.mat` trajectories.
 
 ## How To Run
 

@@ -43,6 +43,8 @@ pub struct TexbatScenarioConfig {
     pub observed_navsol_path: PathBuf,
     pub scenario_offset_from_clean_s: f64,
     pub spoof_onset_in_observed_file_s: Option<f64>,
+    pub alignment_search_window_s: f64,
+    pub alignment_search_step_s: f64,
     pub position_state_std_m: f32,
     pub velocity_state_std_mps: f32,
     pub gps_horizontal_position_std_m: f32,
@@ -67,6 +69,8 @@ impl TexbatScenarioConfig {
             observed_navsol_path: observed_navsol_path.into(),
             scenario_offset_from_clean_s,
             spoof_onset_in_observed_file_s,
+            alignment_search_window_s: 0.0,
+            alignment_search_step_s: 0.05,
             position_state_std_m: 2.0,
             velocity_state_std_mps: 0.2,
             gps_horizontal_position_std_m: 1.5,
@@ -95,6 +99,7 @@ pub struct TexbatScenarioReport {
     pub mean_evaluation_latency_us: f64,
     pub p95_evaluation_latency_us: f64,
     pub max_evaluation_latency_us: f64,
+    pub calibrated_alignment_offset_s: f64,
     pub position_bias_calibration_ned_m: Vector3<f32>,
     pub velocity_bias_calibration_ned_mps: Vector3<f32>,
     pub clock_bias_calibration_m: f32,
@@ -220,6 +225,7 @@ struct AlignedReplaySample {
 #[derive(Clone, Debug)]
 struct AlignedScenarioData {
     samples: Vec<AlignedReplaySample>,
+    calibrated_alignment_offset_s: f64,
     position_bias_calibration_ned_m: Vector3<f32>,
     velocity_bias_calibration_ned_mps: Vector3<f32>,
     clock_bias_calibration_m: f32,
@@ -282,6 +288,7 @@ fn build_aligned_samples(
 ) -> Result<AlignedScenarioData, TexbatError> {
     let clean = load_navsol_file(&config.clean_navsol_path)?;
     let observed = load_navsol_file(&config.observed_navsol_path)?;
+    let calibrated_alignment_offset_s = calibrate_alignment_offset(config, &clean, &observed);
 
     let home_ecef = *clean
         .ecef_positions_m
@@ -294,7 +301,7 @@ fn build_aligned_samples(
     let mut aligned_samples = Vec::with_capacity(observed.timestamps_s.len());
 
     for (observed_index, observed_timestamp_s) in observed.timestamps_s.iter().enumerate() {
-        let aligned_timestamp_s = *observed_timestamp_s - config.scenario_offset_from_clean_s;
+        let aligned_timestamp_s = *observed_timestamp_s - calibrated_alignment_offset_s;
         clean_index = nearest_clean_index(&clean.timestamps_s, aligned_timestamp_s, clean_index);
 
         let reference_position_ned_m = ecef_to_local_ned(
@@ -344,6 +351,7 @@ fn build_aligned_samples(
 
     Ok(AlignedScenarioData {
         samples: aligned_samples,
+        calibrated_alignment_offset_s,
         position_bias_calibration_ned_m,
         velocity_bias_calibration_ned_mps,
         clock_bias_calibration_m,
@@ -359,6 +367,7 @@ fn evaluate_aligned_samples(
     let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha));
     let mut report = TexbatScenarioReport {
         scenario_name: config.scenario_name.clone(),
+        calibrated_alignment_offset_s: aligned_data.calibrated_alignment_offset_s,
         position_bias_calibration_ned_m: aligned_data.position_bias_calibration_ned_m,
         velocity_bias_calibration_ned_mps: aligned_data.velocity_bias_calibration_ned_mps,
         clock_bias_calibration_m: aligned_data.clock_bias_calibration_m,
@@ -529,6 +538,106 @@ fn load_navsol_file(path: &Path) -> Result<NavSolutionSeries, TexbatError> {
         ecef_velocities_mps,
         clock_bias_m,
     })
+}
+
+fn calibrate_alignment_offset(
+    config: &TexbatScenarioConfig,
+    clean: &NavSolutionSeries,
+    observed: &NavSolutionSeries,
+) -> f64 {
+    if config.alignment_search_window_s <= 0.0 {
+        return config.scenario_offset_from_clean_s;
+    }
+
+    let Some(spoof_onset_in_observed_file_s) = config.spoof_onset_in_observed_file_s else {
+        return config.scenario_offset_from_clean_s;
+    };
+
+    let mut best_offset_s = config.scenario_offset_from_clean_s;
+    let mut best_score = f64::INFINITY;
+    let mut trial_offset_s = config.scenario_offset_from_clean_s - config.alignment_search_window_s;
+    let max_offset_s = config.scenario_offset_from_clean_s + config.alignment_search_window_s;
+    let step_s = config.alignment_search_step_s.max(0.001);
+
+    while trial_offset_s <= max_offset_s + 1.0e-9 {
+        let score = alignment_score_for_offset(
+            clean,
+            observed,
+            trial_offset_s,
+            spoof_onset_in_observed_file_s,
+        );
+        if score < best_score {
+            best_score = score;
+            best_offset_s = trial_offset_s;
+        }
+
+        trial_offset_s += step_s;
+    }
+
+    best_offset_s
+}
+
+fn alignment_score_for_offset(
+    clean: &NavSolutionSeries,
+    observed: &NavSolutionSeries,
+    offset_s: f64,
+    spoof_onset_in_observed_file_s: f64,
+) -> f64 {
+    let home_ecef = clean.ecef_positions_m[0];
+    let home_lat_lon = ecef_to_lat_lon(home_ecef);
+    let ecef_to_ned = ecef_to_ned_rotation(home_lat_lon.0, home_lat_lon.1);
+    let mut clean_index = 0_usize;
+    let mut position_deltas = Vec::new();
+    let mut clock_bias_deltas = Vec::new();
+
+    for (observed_index, observed_timestamp_s) in observed.timestamps_s.iter().enumerate() {
+        let observed_relative_time_s = *observed_timestamp_s - observed.timestamps_s[0];
+        if observed_relative_time_s >= spoof_onset_in_observed_file_s {
+            break;
+        }
+
+        let aligned_timestamp_s = *observed_timestamp_s - offset_s;
+        clean_index = nearest_clean_index(&clean.timestamps_s, aligned_timestamp_s, clean_index);
+
+        let reference_position_ned_m = ecef_to_local_ned(
+            &ecef_to_ned,
+            home_ecef,
+            clean.ecef_positions_m[clean_index],
+        );
+        let observed_position_ned_m = ecef_to_local_ned(
+            &ecef_to_ned,
+            home_ecef,
+            observed.ecef_positions_m[observed_index],
+        );
+        position_deltas.push(observed_position_ned_m - reference_position_ned_m);
+        clock_bias_deltas.push(
+            observed.clock_bias_m[observed_index] - clean.clock_bias_m[clean_index],
+        );
+    }
+
+    if position_deltas.is_empty() {
+        return f64::INFINITY;
+    }
+
+    let mean_position_delta = position_deltas
+        .iter()
+        .fold(Vector3::zeros(), |sum, delta| sum + *delta)
+        / position_deltas.len() as f32;
+    let mean_clock_bias_delta =
+        clock_bias_deltas.iter().sum::<f64>() / clock_bias_deltas.len() as f64;
+
+    let position_spread = position_deltas
+        .iter()
+        .map(|delta| (*delta - mean_position_delta).norm() as f64)
+        .sum::<f64>()
+        / position_deltas.len() as f64;
+    let clock_bias_spread = clock_bias_deltas
+        .iter()
+        .map(|delta| (delta - mean_clock_bias_delta).abs())
+        .sum::<f64>()
+        / clock_bias_deltas.len() as f64;
+
+    position_spread + 0.2 * clock_bias_spread
 }
 
 fn value_at(data: &[f64], rows: usize, row: usize, column: usize) -> f64 {
