@@ -55,6 +55,8 @@ pub struct TexbatScenarioConfig {
     pub gps_vertical_velocity_std_mps: f32,
     pub clock_bias_std_m: f32,
     pub yaw_state_std_rad: f32,
+    pub use_empirical_clean_noise: bool,
+    pub empirical_noise_scale: f32,
 }
 
 impl TexbatScenarioConfig {
@@ -83,6 +85,8 @@ impl TexbatScenarioConfig {
             gps_vertical_velocity_std_mps: 0.5,
             clock_bias_std_m: 5.0,
             yaw_state_std_rad: 0.5,
+            use_empirical_clean_noise: true,
+            empirical_noise_scale: 1.0,
         }
     }
 }
@@ -108,6 +112,9 @@ pub struct TexbatScenarioReport {
     pub position_bias_calibration_ned_m: Vector3<f32>,
     pub velocity_bias_calibration_ned_mps: Vector3<f32>,
     pub clock_bias_calibration_m: f32,
+    pub calibrated_position_std_ned_m: Vector3<f32>,
+    pub calibrated_velocity_std_ned_mps: Vector3<f32>,
+    pub calibrated_clock_bias_std_m: f32,
 }
 
 impl TexbatScenarioReport {
@@ -238,12 +245,20 @@ struct AlignedScenarioData {
     position_bias_calibration_ned_m: Vector3<f32>,
     velocity_bias_calibration_ned_mps: Vector3<f32>,
     clock_bias_calibration_m: f32,
+    empirical_noise_calibration: EmpiricalNoiseCalibration,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct AlignmentCalibration {
     offset_s: f64,
     scale: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EmpiricalNoiseCalibration {
+    position_std_ned_m: Vector3<f32>,
+    velocity_std_ned_mps: Vector3<f32>,
+    clock_bias_std_m: f32,
 }
 
 pub fn scenario_onset_in_file_seconds(
@@ -359,6 +374,8 @@ fn build_aligned_samples(
         sample.observed_velocity_ned_mps -= velocity_bias_calibration_ned_mps;
         sample.observed_clock_bias_m -= clock_bias_calibration_m;
     }
+    let empirical_noise_calibration =
+        empirical_noise_calibration(config, &aligned_samples);
 
     Ok(AlignedScenarioData {
         samples: aligned_samples,
@@ -367,6 +384,7 @@ fn build_aligned_samples(
         position_bias_calibration_ned_m,
         velocity_bias_calibration_ned_mps,
         clock_bias_calibration_m,
+        empirical_noise_calibration,
     })
 }
 
@@ -385,6 +403,11 @@ fn evaluate_aligned_samples(
         position_bias_calibration_ned_m: aligned_data.position_bias_calibration_ned_m,
         velocity_bias_calibration_ned_mps: aligned_data.velocity_bias_calibration_ned_mps,
         clock_bias_calibration_m: aligned_data.clock_bias_calibration_m,
+        calibrated_position_std_ned_m: aligned_data.empirical_noise_calibration.position_std_ned_m,
+        calibrated_velocity_std_ned_mps: aligned_data
+            .empirical_noise_calibration
+            .velocity_std_ned_mps,
+        calibrated_clock_bias_std_m: aligned_data.empirical_noise_calibration.clock_bias_std_m,
         ..TexbatScenarioReport::default()
     };
     let mut latencies_us = Vec::with_capacity(aligned_data.samples.len());
@@ -399,20 +422,17 @@ fn evaluate_aligned_samples(
         }
 
         let predicted_state = predicted_state_from_reference(config, &sample);
-        let gps_observation = GpsObservation::from_accuracy_metrics(
+        let gps_observation = gps_observation_with_noise(
             sample.timestamp_s,
             sample.observed_position_ned_m,
             sample.observed_velocity_ned_mps,
-            config.gps_horizontal_position_std_m,
-            config.gps_vertical_position_std_m,
-            config.gps_horizontal_velocity_std_mps,
-            config.gps_vertical_velocity_std_mps,
+            aligned_data.empirical_noise_calibration,
         );
         let clock_bias_observation = ClockBiasObservation::new(
             sample.timestamp_s,
             sample.reference_clock_bias_m,
             sample.observed_clock_bias_m,
-            config.clock_bias_std_m,
+            aligned_data.empirical_noise_calibration.clock_bias_std_m,
         );
 
         let started = Instant::now();
@@ -470,6 +490,36 @@ fn evaluate_aligned_samples(
     Ok(report)
 }
 
+fn gps_observation_with_noise(
+    timestamp_s: f64,
+    position_ned_m: Vector3<f32>,
+    velocity_ned_mps: Vector3<f32>,
+    empirical_noise_calibration: EmpiricalNoiseCalibration,
+) -> GpsObservation {
+    let mut observation_noise = crate::statistical_monitor::observation::ObservationNoiseMatrix::zeros();
+    observation_noise.fixed_view_mut::<3, 3>(0, 0).copy_from(
+        &nalgebra::SMatrix::<f32, 3, 3>::from_diagonal(
+            &empirical_noise_calibration
+                .position_std_ned_m
+                .component_mul(&empirical_noise_calibration.position_std_ned_m),
+        ),
+    );
+    observation_noise.fixed_view_mut::<3, 3>(3, 3).copy_from(
+        &nalgebra::SMatrix::<f32, 3, 3>::from_diagonal(
+            &empirical_noise_calibration
+                .velocity_std_ned_mps
+                .component_mul(&empirical_noise_calibration.velocity_std_ned_mps),
+        ),
+    );
+
+    GpsObservation::new(
+        timestamp_s,
+        position_ned_m,
+        velocity_ned_mps,
+        observation_noise,
+    )
+}
+
 fn predicted_state_from_reference(
     config: &TexbatScenarioConfig,
     sample: &AlignedReplaySample,
@@ -497,6 +547,124 @@ fn predicted_state_from_reference(
     covariance[(ATT_IDX + 2, ATT_IDX + 2)] = yaw_variance;
 
     EskfState::new(nominal, covariance)
+}
+
+fn empirical_noise_calibration(
+    config: &TexbatScenarioConfig,
+    samples: &[AlignedReplaySample],
+) -> EmpiricalNoiseCalibration {
+    let calibration_samples: Vec<&AlignedReplaySample> =
+        samples.iter().filter(|sample| !sample.label_spoofed).collect();
+    let source = if calibration_samples.is_empty() {
+        samples.iter().collect::<Vec<_>>()
+    } else {
+        calibration_samples
+    };
+
+    let empirical_position_std_ned_m = sample_std_vector3(
+        source
+            .iter()
+            .map(|sample| sample.observed_position_ned_m - sample.reference_position_ned_m),
+    );
+    let empirical_velocity_std_ned_mps = sample_std_vector3(
+        source
+            .iter()
+            .map(|sample| sample.observed_velocity_ned_mps - sample.reference_velocity_ned_mps),
+    );
+    let empirical_clock_bias_std_m = sample_std_scalar(
+        source
+            .iter()
+            .map(|sample| sample.observed_clock_bias_m - sample.reference_clock_bias_m),
+    );
+
+    if !config.use_empirical_clean_noise {
+        return EmpiricalNoiseCalibration {
+            position_std_ned_m: Vector3::new(
+                config.gps_horizontal_position_std_m,
+                config.gps_horizontal_position_std_m,
+                config.gps_vertical_position_std_m,
+            ),
+            velocity_std_ned_mps: Vector3::new(
+                config.gps_horizontal_velocity_std_mps,
+                config.gps_horizontal_velocity_std_mps,
+                config.gps_vertical_velocity_std_mps,
+            ),
+            clock_bias_std_m: config.clock_bias_std_m,
+        };
+    }
+
+    EmpiricalNoiseCalibration {
+        position_std_ned_m: Vector3::new(
+            config
+                .gps_horizontal_position_std_m
+                .max(empirical_position_std_ned_m.x * config.empirical_noise_scale),
+            config
+                .gps_horizontal_position_std_m
+                .max(empirical_position_std_ned_m.y * config.empirical_noise_scale),
+            config
+                .gps_vertical_position_std_m
+                .max(empirical_position_std_ned_m.z * config.empirical_noise_scale),
+        ),
+        velocity_std_ned_mps: Vector3::new(
+            config
+                .gps_horizontal_velocity_std_mps
+                .max(empirical_velocity_std_ned_mps.x * config.empirical_noise_scale),
+            config
+                .gps_horizontal_velocity_std_mps
+                .max(empirical_velocity_std_ned_mps.y * config.empirical_noise_scale),
+            config
+                .gps_vertical_velocity_std_mps
+                .max(empirical_velocity_std_ned_mps.z * config.empirical_noise_scale),
+        ),
+        clock_bias_std_m: config
+            .clock_bias_std_m
+            .max(empirical_clock_bias_std_m * config.empirical_noise_scale),
+    }
+}
+
+fn sample_std_vector3(values: impl Iterator<Item = Vector3<f32>>) -> Vector3<f32> {
+    let collected: Vec<Vector3<f32>> = values.collect();
+    if collected.is_empty() {
+        return Vector3::zeros();
+    }
+
+    let mut mean = Vector3::zeros();
+    for value in &collected {
+        mean += *value;
+    }
+    mean /= collected.len() as f32;
+
+    let mut variance = Vector3::zeros();
+    for value in &collected {
+        let centered = *value - mean;
+        variance += centered.component_mul(&centered);
+    }
+    variance /= collected.len() as f32;
+
+    Vector3::new(
+        variance.x.sqrt(),
+        variance.y.sqrt(),
+        variance.z.sqrt(),
+    )
+}
+
+fn sample_std_scalar(values: impl Iterator<Item = f32>) -> f32 {
+    let collected: Vec<f32> = values.collect();
+    if collected.is_empty() {
+        return 0.0;
+    }
+
+    let mean = collected.iter().sum::<f32>() / collected.len() as f32;
+    let variance = collected
+        .iter()
+        .map(|value| {
+            let centered = *value - mean;
+            centered * centered
+        })
+        .sum::<f32>()
+        / collected.len() as f32;
+
+    variance.sqrt()
 }
 
 fn load_navsol_file(path: &Path) -> Result<NavSolutionSeries, TexbatError> {

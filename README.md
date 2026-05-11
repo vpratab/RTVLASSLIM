@@ -54,8 +54,8 @@ The table below is the shortest honest summary of what has actually been run.
 | PX4 SIH replay, nominal | 60 captured synchronized samples | anomaly FPR `0.000`, rejected FPR `0.000` | clean behavior on one narrow simulator capture |
 | PX4 SIH replay, injected spoof | same capture with software-injected GPS offset | anomaly TPR `1.000`, rejected TPR `1.000` | full rejection on one replayed spoof profile |
 | PX4 SIH live MAVLink spoof proxy | live PX4 SIH stream, spoof onset at `1.5 s` | `13/0/17` trusted/flagged/rejected | verdicts stayed trusted before spoof onset and then flipped to sustained rejection |
-| TEXBAT `ds2` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.988/0.071` | strong result on one processed-dataset scenario |
-| TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.800/0.135` | partial detection with elevated pre-spoof false positives |
+| TEXBAT `ds2` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.978/0.034` | strong result with lower clean false positives than the earlier fixed-noise proxy |
+| TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.749/0.032` | lower clean false positives, with reduced sensitivity, on the hardest processed scenario here |
 | TEXBAT `ds7` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.705/0.000` | partial detection on a harder processed-dataset scenario |
 
 These are narrow results. They should not be generalized beyond the exact simulator and processed-data paths described in this repository.
@@ -103,21 +103,22 @@ Method notes:
 
 ### Processed TEXBAT Replay
 
-Observed on `2026-05-10` using `cargo run --example run_texbat_harness` after downloading processed TEXBAT artifacts:
+Observed on `2026-05-11` using `cargo run --example run_texbat_harness` after downloading processed TEXBAT artifacts:
 
 | Scenario | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `176.50 us` | `183.10 us` | `295.10 us` |
-| `ds2` | `531 / 13 / 1556` | `0.988` | `0.071` | `0.981` | `0.065` | `177.04 us` | `186.00 us` | `272.00 us` |
-| `ds3` | `817 / 3 / 1276` | `0.800` | `0.135` | `0.800` | `0.130` | `175.84 us` | `182.40 us` | `288.90 us` |
-| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `180.81 us` | `209.40 us` | `452.50 us` |
+| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `178.35 us` | `188.50 us` | `286.80 us` |
+| `ds3` | `956 / 4 / 1136` | `0.749` | `0.032` | `0.749` | `0.025` | `182.10 us` | `222.30 us` | `622.00 us` |
+| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `177.97 us` | `186.00 us` | `422.90 us` |
 
 Method notes:
 
 - these results use UT processed `navsol.mat` products, not raw IF captures
 - the harness uses the clean navigation solution as a reference trajectory proxy
 - there is no paired IMU stream from TEXBAT in this repository
-- `ds3` improved materially after affine time alignment and persistent clock-bias scoring, but its pre-spoof false-positive rate remains elevated
+- the current harness now calibrates replay noise from the pre-spoof clean segment, including per-axis position spread and clock-bias spread
+- `ds3` now has materially lower pre-spoof false positives than the earlier fixed-noise proxy, but that reduction comes with lower spoof sensitivity than the earlier over-tight setting
 
 ## Interpretation
 
@@ -125,7 +126,7 @@ The current evidence supports these narrower statements:
 
 - the monitor path works end to end on live PX4 SIH telemetry
 - the current residual checks can reject at least one live software-injected MAVLink spoof profile after onset
-- the current processed-TEXBAT harness performs strongly on `ds2`, partially on `ds3`, and partially on `ds7`
+- the current processed-TEXBAT harness performs strongly on `ds2`, reduces clean false positives on `ds3`, and remains partial on `ds7`
 
 The current evidence does not support these broader statements:
 

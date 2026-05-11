@@ -49,9 +49,9 @@ The goal is to separate:
 | Scenario | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `176.50 us` | `183.10 us` | `295.10 us` |
-| `ds2` | `531 / 13 / 1556` | `0.988` | `0.071` | `0.981` | `0.065` | `177.04 us` | `186.00 us` | `272.00 us` |
-| `ds3` | `817 / 3 / 1276` | `0.800` | `0.135` | `0.800` | `0.130` | `175.84 us` | `182.40 us` | `288.90 us` |
-| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `180.81 us` | `209.40 us` | `452.50 us` |
+| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `178.35 us` | `188.50 us` | `286.80 us` |
+| `ds3` | `956 / 4 / 1136` | `0.749` | `0.032` | `0.749` | `0.025` | `182.10 us` | `222.30 us` | `622.00 us` |
+| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `177.97 us` | `186.00 us` | `422.90 us` |
 
 ## Limitations
 
@@ -67,7 +67,8 @@ The goal is to separate:
 - uses processed navigation solutions, not raw IF
 - no paired IMU stream is available in this repository
 - clean trajectory is used as a reference proxy
-- `ds3` still shows elevated pre-spoof false positives
+- replay noise is now calibrated from the pre-spoof clean segment rather than relying only on fixed observation-noise assumptions
+- `ds3` still remains a partial-detection case, even though its clean false positives are substantially lower than in the earlier fixed-noise proxy
 
 ## Reviewer Guidance
 

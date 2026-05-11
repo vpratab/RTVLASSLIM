@@ -134,6 +134,22 @@ fn run() -> Result<(), String> {
             "  calibration clock bias (m): {:.2}",
             report.clock_bias_calibration_m
         );
+        println!(
+            "  calibrated position std NED (m): {:.2}, {:.2}, {:.2}",
+            report.calibrated_position_std_ned_m.x,
+            report.calibrated_position_std_ned_m.y,
+            report.calibrated_position_std_ned_m.z
+        );
+        println!(
+            "  calibrated velocity std NED (m/s): {:.2}, {:.2}, {:.2}",
+            report.calibrated_velocity_std_ned_mps.x,
+            report.calibrated_velocity_std_ned_mps.y,
+            report.calibrated_velocity_std_ned_mps.z
+        );
+        println!(
+            "  calibrated clock std (m): {:.2}",
+            report.calibrated_clock_bias_std_m
+        );
     }
 
     Ok(())
