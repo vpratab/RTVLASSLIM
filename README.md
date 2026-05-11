@@ -84,7 +84,7 @@ and, on the local processed TEXBAT artifacts downloaded from the UT Radionavigat
 cargo run --example run_texbat_harness
 ```
 
-At the time of writing, the crate passes 19 library tests covering:
+At the time of writing, the crate passes 21 library tests covering:
 
 - IMU propagation staying stable at rest.
 - GPS innovation rejection on a large spoof-like offset.
