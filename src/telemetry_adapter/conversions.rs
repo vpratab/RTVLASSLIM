@@ -115,6 +115,32 @@ pub fn geodetic_to_ned(
     Ok(Vector3::new(ned_m.x as f32, ned_m.y as f32, ned_m.z as f32))
 }
 
+pub fn offset_geodetic_position_ned(
+    geodetic_position: GeodeticPosition,
+    ned_offset_m: Vector3<f64>,
+) -> Result<GeodeticPosition, ConversionError> {
+    let sin_lat = sin(geodetic_position.latitude_rad);
+    let cos_lat = cos(geodetic_position.latitude_rad);
+    let eccentricity_term = 1.0 - WGS84_ECCENTRICITY_SQUARED * sin_lat * sin_lat;
+    let prime_vertical_radius_m = WGS84_SEMI_MAJOR_AXIS_M / sqrt(eccentricity_term);
+    let meridian_radius_m = WGS84_SEMI_MAJOR_AXIS_M * (1.0 - WGS84_ECCENTRICITY_SQUARED)
+        / (eccentricity_term * sqrt(eccentricity_term));
+
+    let latitude_rad = geodetic_position.latitude_rad
+        + ned_offset_m.x / (meridian_radius_m + geodetic_position.altitude_m);
+    let longitude_denominator_m = (prime_vertical_radius_m + geodetic_position.altitude_m)
+        * cos_lat.abs().max(1.0e-9);
+    let longitude_delta_rad = if cos_lat >= 0.0 {
+        ned_offset_m.y / longitude_denominator_m
+    } else {
+        -ned_offset_m.y / longitude_denominator_m
+    };
+    let longitude_rad = normalise_longitude_rad(geodetic_position.longitude_rad + longitude_delta_rad);
+    let altitude_m = geodetic_position.altitude_m - ned_offset_m.z;
+
+    GeodeticPosition::new(latitude_rad, longitude_rad, altitude_m)
+}
+
 fn geodetic_to_ecef(geodetic_position: GeodeticPosition) -> Vector3<f64> {
     let sin_lat = sin(geodetic_position.latitude_rad);
     let cos_lat = cos(geodetic_position.latitude_rad);
@@ -151,9 +177,20 @@ fn ecef_to_ned_rotation(latitude_rad: f64, longitude_rad: f64) -> Matrix3<f64> {
     )
 }
 
+fn normalise_longitude_rad(longitude_rad: f64) -> f64 {
+    let wrapped = (longitude_rad + PI).rem_euclid(2.0 * PI) - PI;
+    if wrapped == -PI {
+        PI
+    } else {
+        wrapped
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{GeodeticPosition, HomePosition, geodetic_to_ned};
+    use nalgebra::Vector3;
+
+    use super::{GeodeticPosition, HomePosition, geodetic_to_ned, offset_geodetic_position_ned};
 
     #[test]
     fn projecting_home_position_returns_zero() {
@@ -162,5 +199,19 @@ mod tests {
         let ned = geodetic_to_ned(home_position, home_geodetic).unwrap();
 
         assert!(ned.norm() < 1.0e-3);
+    }
+
+    #[test]
+    fn ned_offset_round_trips_through_geodetic_projection() {
+        let home_geodetic = GeodeticPosition::new(0.652_534, -2.136_622, 132.0).unwrap();
+        let home_position = HomePosition::new(home_geodetic);
+        let injected_offset_m = Vector3::new(87.5_f64, -43.0_f64, 12.0_f64);
+        let offset_geodetic =
+            offset_geodetic_position_ned(home_geodetic, injected_offset_m).unwrap();
+
+        let projected_offset_m = geodetic_to_ned(home_position, offset_geodetic).unwrap();
+        let projected_offset_m = projected_offset_m.cast::<f64>();
+
+        assert!((projected_offset_m - injected_offset_m).norm() < 0.25);
     }
 }

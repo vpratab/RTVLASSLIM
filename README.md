@@ -12,6 +12,7 @@ It is not a finished product, not a validated deployment claim, and not a resear
 - A process -> sign -> purge orchestrator that explicitly wipes raw MAVLink frame buffers after attestation.
 - An offline CSV validation harness for replaying logged traces and summarizing detection outcomes.
 - A PX4 SIH capture-and-benchmark path that records synchronized monitor inputs and measures simulator-only detection outcomes plus per-sample evaluation latency.
+- A live PX4 SIH spoof-proxy path that mutates `GLOBAL_POSITION_INT` in flight and exercises the end-to-end monitor against live simulator telemetry.
 - A processed-TEXBAT replay harness that aligns clean and spoofed navigation-solution traces and measures scenario-level detection outcomes, including optional clock-bias checks.
 
 ## What Is Implemented
@@ -73,6 +74,7 @@ and, inside WSL2 Ubuntu with PX4 SIH built from the local `external/PX4-Autopilo
 bash scripts/wsl_inline_sniff.sh --connection udpout:127.0.0.1:18570 --event-limit 500 --gps-limit 1 --suppress-imu
 bash scripts/wsl_inline_live.sh
 bash scripts/wsl_px4_benchmark.sh 60
+bash scripts/wsl_px4_live_spoof.sh
 ```
 
 and, on the local processed TEXBAT artifacts downloaded from the UT Radionavigation Laboratory:
@@ -105,8 +107,13 @@ The live PX4 verification that has actually been run is narrow and specific:
   - spoofed replay dataset: `0/0/60` trusted/flagged/rejected, anomaly TPR/FPR `1.000/0.000`, rejected TPR/FPR `1.000/0.000`
   - nominal evaluation latency mean/p95/max: `333.17 / 377.31 / 935.51 us`
   - spoofed evaluation latency mean/p95/max: `312.32 / 334.31 / 382.50 us`
+- `scripts/wsl_px4_live_spoof.sh` was run on `2026-05-11`. It starts PX4 SIH in WSL2, runs `examples/px4_spoof_proxy.rs` as a MAVLink man-in-the-middle, and forwards live PX4 telemetry to `examples/px4_sitl_live.rs` after mutating only `GLOBAL_POSITION_INT`. The specific spoof profile used there was a step offset of `(+90 m north, -50 m east, +8 m down)` plus `(+10, -5, +1) m/s` in GPS-reported NED velocity after a `1.5 s` onset delay. The observed live result was:
+  - `13/0/17` trusted/flagged/rejected across 30 live GPS verdicts
+  - first rejection at live verdict `#14`, immediately after spoof onset
+  - `341` total packets processed (`311` IMU, `30` GPS)
+  - signed evidence file emitted at `artifacts/wsl_px4_live_spoof_evidence.bin` with observed size `6090` bytes
 
-Those PX4 numbers are narrow and should be read narrowly: they come from PX4 SIH telemetry captured in WSL2 and a synthetic GPS spoof injected into the captured dataset by this repository's own benchmark tooling. They are not a live adversarial spoofing test and not a claim about general real-world performance.
+Those PX4 numbers are narrow and should be read narrowly: they come from PX4 SIH telemetry in WSL2 and spoof profiles injected by this repository's own tooling. The capture/replay benchmark is not a live adversarial spoofing test, and the live spoof proxy is still a software-level man-in-the-middle on MAVLink `GLOBAL_POSITION_INT`, not an RF-level or receiver-level attack.
 
 - `cargo run --example run_texbat_harness` was run on `2026-05-10` against the downloaded processed TEXBAT `cleanStatic`, `ds2`, `ds3`, and `ds7` `navsol.mat` files. The harness fits an affine clean-alignment map on the pre-spoof segment, calibrates constant pre-spoof receiver bias, and then replays the aligned solutions through the monitor with a persistent clock-bias score added on top of the per-frame Mahalanobis check. The observed results were:
   - `cleanStatic-baseline`: `2115/0/0` trusted/flagged/rejected, anomaly FPR `0.000`, rejected FPR `0.000`, latency mean/p95/max `176.50 / 183.10 / 295.10 us`, calibrated clean-alignment map `scale=1.000000000`, `offset=-0.000000 s`
@@ -125,6 +132,7 @@ cargo test --lib
 cargo run --example gps_spoof
 cargo run --example run_validation
 cargo run --example px4_sitl_live -- --connection udpout:127.0.0.1:18570
+cargo run --example px4_spoof_proxy -- --upstream udpout:127.0.0.1:18570 --downstream udpout:127.0.0.1:18571
 cargo run --example run_monitor_benchmark -- artifacts/px4_monitor_dataset.csv artifacts/px4_monitor_dataset_spoofed.csv
 cargo run --example run_texbat_harness
 ```
@@ -136,10 +144,11 @@ For the live PX4 path that has been verified here, run it from WSL2 so PX4 and t
 ```bash
 bash scripts/wsl_inline_live.sh
 bash scripts/wsl_px4_benchmark.sh 60
+bash scripts/wsl_px4_live_spoof.sh
 bash scripts/download_texbat_processed.sh
 ```
 
-There is still no raw-TEXBAT IF processing path, no paired-IMU TEXBAT replay, no live adversarial spoofed PX4 mission, and no hardware validation. The strongest exercised paths today are the library test suite, the synthetic spoofing example, the offline validation example, the UDP/MAVLink loopback test, the WSL-local PX4 SIH nominal run, the WSL-local PX4 SIH capture/replay benchmark, and the processed-TEXBAT replay harness.
+There is still no raw-TEXBAT IF processing path, no paired-IMU TEXBAT replay, no RF-level/live receiver spoofed PX4 mission, and no hardware validation. The strongest exercised paths today are the library test suite, the synthetic spoofing example, the offline validation example, the UDP/MAVLink loopback test, the WSL-local PX4 SIH nominal run, the WSL-local PX4 SIH capture/replay benchmark, the WSL-local PX4 SIH live MAVLink spoof proxy, and the processed-TEXBAT replay harness.
 
 ## Honest Status
 
@@ -149,5 +158,6 @@ This repository should be understood as an early-stage systems prototype:
 - not yet a validated defense-grade detector
 - not yet novel research by itself
 - now verified on a narrow PX4 SIH simulator capture/replay benchmark with clean nominal behavior and full rejection of one injected spoof profile
+- now also verified on a narrow live PX4 SIH MAVLink-spoof path where verdicts stayed trusted before spoof onset and then flipped to sustained rejection after a step GPS offset was injected
 - now also verified on a narrow processed-TEXBAT replay path, where it performs strongly on `ds2`, improves substantially on `ds3`, and remains partial on `ds7`
 - potentially useful as a foundation for a real PX4/TEXBAT validation effort

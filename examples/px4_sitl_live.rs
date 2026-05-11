@@ -26,6 +26,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let connection = argument_value("--connection")
         .unwrap_or_else(|| "udpout:127.0.0.1:18570".to_owned());
+    let skip_handshake = flag_present("--skip-handshake");
     let verdict_limit = argument_value("--verdict-limit")
         .map(|value| value.parse::<u64>().map_err(|error| error.to_string()))
         .transpose()?
@@ -40,13 +41,15 @@ fn run() -> Result<(), String> {
 
     eprintln!("binding live subscriber on {connection}");
     let subscriber = MavlinkSubscriber::bind(&connection).map_err(|error| error.to_string())?;
-    for _ in 0..3 {
-        subscriber
-            .announce_ground_station()
-            .map_err(|error| error.to_string())?;
-        subscriber
-            .request_standard_message_streams()
-            .map_err(|error| error.to_string())?;
+    if !skip_handshake {
+        for _ in 0..3 {
+            subscriber
+                .announce_ground_station()
+                .map_err(|error| error.to_string())?;
+            subscriber
+                .request_standard_message_streams()
+                .map_err(|error| error.to_string())?;
+        }
     }
     eprintln!("subscriber ready");
 
@@ -166,4 +169,8 @@ fn argument_value(flag: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn flag_present(flag: &str) -> bool {
+    std::env::args().skip(1).any(|argument| argument == flag)
 }
