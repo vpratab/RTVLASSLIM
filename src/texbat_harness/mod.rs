@@ -1,3 +1,5 @@
+pub mod baselines;
+
 use core::fmt;
 use std::{
     fs::File,

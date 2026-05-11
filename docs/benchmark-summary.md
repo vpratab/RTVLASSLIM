@@ -69,6 +69,25 @@ The goal is to separate:
 
 The strongest takeaway from this table is that the harder processed-TEXBAT detections are not coming from plain GPS residual thresholds alone. On `ds3`, removing clock-bias persistence drops anomaly TPR from `0.749` to `0.000` at roughly the same false-positive rate.
 
+### Simple Baseline Comparison
+
+The repository now also includes `examples/run_texbat_baselines.rs`, which compares:
+
+- the current full detector
+- a naive GPS vs. dead-reckoning position-distance threshold
+- a standard position-innovation `N_sigma` threshold with no EWMA, persistence, or clock-bias logic
+
+Observed on `2026-05-11` with defaults of `5.0 m` for the naive distance threshold and `3.0 sigma` for the innovation threshold:
+
+| Scenario | Full TPR/FPR | Naive distance TPR/FPR | Innovation `N_sigma` TPR/FPR |
+| --- | --- | --- | --- |
+| `cleanStatic` | `0.000 / 0.000` | `0.000 / 0.000` | `0.000 / 0.000` |
+| `ds2` | `0.978 / 0.034` | `0.445 / 0.102` | `0.000 / 0.018` |
+| `ds3` | `0.749 / 0.032` | `0.631 / 0.125` | `0.000 / 0.025` |
+| `ds7` | `0.705 / 0.000` | `0.000 / 0.000` | `0.000 / 0.000` |
+
+These defaults are intentionally simple, not tuned for best possible baseline performance. The main use is to quantify what the persistence-heavy full detector is buying over simpler alternatives.
+
 ### Evidence Verification
 
 The framed evidence file emitted by the live PX4 spoof path was rechecked with:

@@ -31,6 +31,8 @@ The `examples/` directory is grouped by purpose rather than by verification stat
 
 - `run_texbat_harness.rs`
   - load processed TEXBAT `navsol.mat` files and summarize scenario results
+- `run_texbat_baselines.rs`
+  - compare the full detector against a naive GPS/DR distance threshold and a standard innovation `N_sigma` baseline on the same processed TEXBAT scenarios
 
 ## Local Fixture Data
 
