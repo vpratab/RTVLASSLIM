@@ -1,4 +1,5 @@
 use core::fmt;
+use std::vec::Vec;
 
 use crate::{
     attestation::{AttestationError, AttestationProvider, EvidencePacket, SignedEvidencePacket},
@@ -8,7 +9,7 @@ use crate::{
     },
     statistical_monitor::{
         monitor::{MonitorError, StatisticalMonitor},
-        observation::TrustLevel,
+        observation::{MonitorVerdict, TrustLevel},
     },
     telemetry_adapter::{
         MavlinkSubscriber, SynchronizedGpsSample, TelemetryError, TelemetryUpdate,
@@ -184,9 +185,152 @@ pub struct Orchestrator<T, A, S> {
     eskf_state: EskfState,
     predict_config: PredictConfig,
     statistical_monitor: StatisticalMonitor,
+    live_warmup_calibration: Option<LiveWarmupCalibrationState>,
+    last_monitor_verdict: Option<MonitorVerdict>,
     attestation_provider: A,
     evidence_sink: S,
     mission_report: MissionReport,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LiveWarmupCalibrationConfig {
+    pub warmup_verdicts: usize,
+    pub minimum_horizontal_innovation_std_m: f32,
+    pub minimum_horizontal_cusum_slack_sigma: f32,
+    pub minimum_horizontal_cusum_threshold: f32,
+}
+
+impl Default for LiveWarmupCalibrationConfig {
+    fn default() -> Self {
+        Self {
+            warmup_verdicts: 12,
+            minimum_horizontal_innovation_std_m: 1.0,
+            minimum_horizontal_cusum_slack_sigma: 0.2,
+            minimum_horizontal_cusum_threshold: 3.0,
+        }
+    }
+}
+
+impl LiveWarmupCalibrationConfig {
+    pub const fn new(warmup_verdicts: usize) -> Self {
+        Self {
+            warmup_verdicts: if warmup_verdicts == 0 {
+                1
+            } else {
+                warmup_verdicts
+            },
+            minimum_horizontal_innovation_std_m: 1.0,
+            minimum_horizontal_cusum_slack_sigma: 0.2,
+            minimum_horizontal_cusum_threshold: 3.0,
+        }
+    }
+
+    pub const fn with_minimum_horizontal_innovation_std_m(
+        mut self,
+        minimum_horizontal_innovation_std_m: f32,
+    ) -> Self {
+        self.minimum_horizontal_innovation_std_m = minimum_horizontal_innovation_std_m;
+        self
+    }
+
+    pub const fn with_minimum_horizontal_cusum_slack_sigma(
+        mut self,
+        minimum_horizontal_cusum_slack_sigma: f32,
+    ) -> Self {
+        self.minimum_horizontal_cusum_slack_sigma = minimum_horizontal_cusum_slack_sigma;
+        self
+    }
+
+    pub const fn with_minimum_horizontal_cusum_threshold(
+        mut self,
+        minimum_horizontal_cusum_threshold: f32,
+    ) -> Self {
+        self.minimum_horizontal_cusum_threshold = minimum_horizontal_cusum_threshold;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LiveWarmupCalibrationReport {
+    pub warmup_verdicts: usize,
+    pub horizontal_innovation_std_m: f32,
+    pub horizontal_cusum_slack_sigma: f32,
+    pub horizontal_cusum_threshold: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LiveWarmupCalibrationState {
+    config: LiveWarmupCalibrationConfig,
+    horizontal_residual_samples_m: Vec<f32>,
+    report: Option<LiveWarmupCalibrationReport>,
+}
+
+impl LiveWarmupCalibrationState {
+    fn new(config: LiveWarmupCalibrationConfig) -> Self {
+        Self {
+            config,
+            horizontal_residual_samples_m: Vec::with_capacity(config.warmup_verdicts),
+            report: None,
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.report.is_some()
+    }
+
+    fn report(&self) -> Option<LiveWarmupCalibrationReport> {
+        self.report
+    }
+
+    fn warmup_samples_collected(&self) -> usize {
+        self.horizontal_residual_samples_m.len()
+    }
+
+    fn record_horizontal_residual_m(
+        &mut self,
+        horizontal_residual_m: f32,
+    ) -> Option<LiveWarmupCalibrationReport> {
+        if self.report.is_some() {
+            return self.report;
+        }
+
+        self.horizontal_residual_samples_m.push(horizontal_residual_m);
+        if self.horizontal_residual_samples_m.len() < self.config.warmup_verdicts {
+            return None;
+        }
+
+        let horizontal_innovation_std_m = sample_std_scalar(&self.horizontal_residual_samples_m)
+            .max(self.config.minimum_horizontal_innovation_std_m)
+            .max(1.0e-6);
+        let mut normalized_horizontal_residuals = self
+            .horizontal_residual_samples_m
+            .iter()
+            .map(|horizontal_residual_m| horizontal_residual_m / horizontal_innovation_std_m)
+            .collect::<Vec<_>>();
+        normalized_horizontal_residuals.sort_by(|left, right| left.total_cmp(right));
+
+        let horizontal_cusum_slack_sigma =
+            percentile_sorted(&normalized_horizontal_residuals, 0.95)
+                .unwrap_or(self.config.minimum_horizontal_cusum_slack_sigma)
+                .max(self.config.minimum_horizontal_cusum_slack_sigma)
+                .max(0.0);
+        let mut score = 0.0_f32;
+        let mut clean_score_ceiling = 0.0_f32;
+        for normalized_horizontal_residual in normalized_horizontal_residuals {
+            score = (score + normalized_horizontal_residual - horizontal_cusum_slack_sigma).max(0.0);
+            clean_score_ceiling = clean_score_ceiling.max(score);
+        }
+        let horizontal_cusum_threshold = (clean_score_ceiling + horizontal_cusum_slack_sigma)
+            .max(self.config.minimum_horizontal_cusum_threshold);
+        let report = LiveWarmupCalibrationReport {
+            warmup_verdicts: self.config.warmup_verdicts,
+            horizontal_innovation_std_m,
+            horizontal_cusum_slack_sigma,
+            horizontal_cusum_threshold,
+        };
+        self.report = Some(report);
+        self.report
+    }
 }
 
 impl<T, A, S> Orchestrator<T, A, S>
@@ -208,10 +352,20 @@ where
             eskf_state,
             predict_config,
             statistical_monitor,
+            live_warmup_calibration: None,
+            last_monitor_verdict: None,
             attestation_provider,
             evidence_sink,
             mission_report: MissionReport::default(),
         }
+    }
+
+    pub fn with_live_warmup_calibration(
+        mut self,
+        config: LiveWarmupCalibrationConfig,
+    ) -> Self {
+        self.live_warmup_calibration = Some(LiveWarmupCalibrationState::new(config));
+        self
     }
 
     pub fn mission_report(&self) -> MissionReport {
@@ -220,6 +374,22 @@ where
 
     pub fn eskf_state(&self) -> &EskfState {
         &self.eskf_state
+    }
+
+    pub fn live_warmup_calibration_report(&self) -> Option<LiveWarmupCalibrationReport> {
+        self.live_warmup_calibration
+            .as_ref()
+            .and_then(LiveWarmupCalibrationState::report)
+    }
+
+    pub fn live_warmup_samples_collected(&self) -> Option<usize> {
+        self.live_warmup_calibration
+            .as_ref()
+            .map(LiveWarmupCalibrationState::warmup_samples_collected)
+    }
+
+    pub fn last_monitor_verdict(&self) -> Option<&MonitorVerdict> {
+        self.last_monitor_verdict.as_ref()
     }
 
     pub fn step(&mut self) -> Result<StepOutcome, OrchestratorError> {
@@ -262,6 +432,58 @@ where
         };
 
         let result = (|| {
+            if self
+                .live_warmup_calibration
+                .as_ref()
+                .is_some_and(|state| !state.is_complete())
+            {
+                let mut preview_monitor = self.statistical_monitor;
+                let mut monitor_verdict = preview_monitor
+                    .evaluate_observations(
+                        &synchronized_gps_sample.aligned_predicted_state,
+                        &synchronized_gps_sample.gps_observation,
+                        synchronized_gps_sample.barometer_observation.as_ref(),
+                        synchronized_gps_sample.heading_observation.as_ref(),
+                    )
+                    .map_err(OrchestratorError::Monitor)?;
+                let horizontal_residual_m = monitor_verdict.innovation.fixed_rows::<2>(0).norm();
+                let calibration_report = self
+                    .live_warmup_calibration
+                    .as_mut()
+                    .and_then(|state| state.record_horizontal_residual_m(horizontal_residual_m));
+                if let Some(calibration_report) = calibration_report {
+                    self.statistical_monitor.set_horizontal_residual_persistence(Some(
+                        crate::statistical_monitor::monitor::HorizontalResidualPersistenceConfig::new(
+                            calibration_report.horizontal_cusum_slack_sigma,
+                            calibration_report.horizontal_cusum_threshold,
+                        ),
+                    ));
+                    self.statistical_monitor
+                        .set_horizontal_residual_normalization_std_override_m(Some(
+                            calibration_report.horizontal_innovation_std_m,
+                        ));
+                    self.statistical_monitor.reset_runtime_state();
+                }
+
+                monitor_verdict.trust_level = TrustLevel::Trusted;
+                self.last_monitor_verdict = Some(monitor_verdict.clone());
+                let evidence_packet = EvidencePacket::from_synchronized_sample(
+                    synchronized_gps_sample.timestamp_ns,
+                    synchronized_gps_sample.raw_frame.as_slice(),
+                    &synchronized_gps_sample,
+                    &monitor_verdict,
+                );
+                let signed_evidence = self
+                    .attestation_provider
+                    .sign_evidence(&evidence_packet)
+                    .map_err(OrchestratorError::Attestation)?;
+                self.evidence_sink
+                    .persist(&signed_evidence)
+                    .map_err(OrchestratorError::EvidenceSink)?;
+                self.record_verdict(TrustLevel::Trusted);
+                return Ok(StepOutcome::emitted(TrustLevel::Trusted));
+            }
+
             let monitor_verdict = self
                 .statistical_monitor
                 .evaluate_observations(
@@ -272,6 +494,7 @@ where
                 )
                 .map_err(OrchestratorError::Monitor)?;
             let trust_level = monitor_verdict.trust_level;
+            self.last_monitor_verdict = Some(monitor_verdict.clone());
             let evidence_packet = EvidencePacket::from_synchronized_sample(
                 synchronized_gps_sample.timestamp_ns,
                 synchronized_gps_sample.raw_frame.as_slice(),
@@ -367,6 +590,34 @@ fn hex_encode(bytes: &[u8]) -> String {
     output
 }
 
+fn percentile_sorted(values: &[f32], quantile: f32) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+
+    let clamped_quantile = quantile.clamp(0.0, 1.0);
+    let index = ((values.len() - 1) as f32 * clamped_quantile).floor() as usize;
+    values.get(index).copied()
+}
+
+fn sample_std_scalar(values: &[f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    let variance = values
+        .iter()
+        .map(|value| {
+            let centered = *value - mean;
+            centered * centered
+        })
+        .sum::<f32>()
+        / values.len() as f32;
+
+    variance.sqrt()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
@@ -375,7 +626,8 @@ mod tests {
     use nalgebra::{UnitQuaternion, Vector3};
 
     use super::{
-        EvidencePacket, EvidenceSink, EvidenceSinkError, Orchestrator, StepOutcome, TelemetrySource,
+        EvidencePacket, EvidenceSink, EvidenceSinkError, LiveWarmupCalibrationConfig,
+        LiveWarmupCalibrationState, Orchestrator, StepOutcome, TelemetrySource,
     };
     use crate::{
         attestation::{AttestationProvider, Ed25519AttestationProvider, MockSecureElement},
@@ -718,5 +970,43 @@ mod tests {
 
         assert_eq!(restored.evidence.timestamp_ns, signed.evidence.timestamp_ns);
         assert_eq!(restored.public_key, signed.public_key);
+    }
+
+    #[test]
+    fn live_warmup_calibration_uses_conservative_floors() {
+        let mut state = LiveWarmupCalibrationState::new(
+            LiveWarmupCalibrationConfig::new(4)
+                .with_minimum_horizontal_innovation_std_m(1.0)
+                .with_minimum_horizontal_cusum_slack_sigma(0.2)
+                .with_minimum_horizontal_cusum_threshold(3.0),
+        );
+
+        assert!(state.record_horizontal_residual_m(0.01).is_none());
+        assert!(state.record_horizontal_residual_m(0.02).is_none());
+        assert!(state.record_horizontal_residual_m(0.03).is_none());
+        let report = state.record_horizontal_residual_m(0.04).unwrap();
+
+        assert_eq!(report.warmup_verdicts, 4);
+        assert_eq!(report.horizontal_innovation_std_m, 1.0);
+        assert!(report.horizontal_cusum_slack_sigma >= 0.2);
+        assert!(report.horizontal_cusum_threshold >= 3.0);
+    }
+
+    #[test]
+    fn live_warmup_zero_variance_is_guarded() {
+        let mut state = LiveWarmupCalibrationState::new(
+            LiveWarmupCalibrationConfig::new(3)
+                .with_minimum_horizontal_innovation_std_m(1.0)
+                .with_minimum_horizontal_cusum_slack_sigma(0.2)
+                .with_minimum_horizontal_cusum_threshold(3.0),
+        );
+
+        assert!(state.record_horizontal_residual_m(0.0).is_none());
+        assert!(state.record_horizontal_residual_m(0.0).is_none());
+        let report = state.record_horizontal_residual_m(0.0).unwrap();
+
+        assert_eq!(report.horizontal_innovation_std_m, 1.0);
+        assert_eq!(report.horizontal_cusum_slack_sigma, 0.2);
+        assert_eq!(report.horizontal_cusum_threshold, 3.0);
     }
 }

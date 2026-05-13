@@ -157,6 +157,10 @@ impl HorizontalResidualPersistenceState {
             (self.score + normalized_horizontal_residual - self.config.slack_sigma).max(0.0);
         self.score
     }
+
+    fn reset(&mut self) {
+        self.score = 0.0;
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -165,6 +169,7 @@ pub struct StatisticalMonitor {
     risk_accumulator: EwmaRiskAccumulator,
     clock_bias_persistence: Option<ClockBiasPersistenceState>,
     horizontal_residual_persistence: Option<HorizontalResidualPersistenceState>,
+    horizontal_residual_normalization_std_override_m: Option<f32>,
     immediate_triggers: Option<ImmediateTriggerConfig>,
 }
 
@@ -178,6 +183,7 @@ impl StatisticalMonitor {
             risk_accumulator,
             clock_bias_persistence: None,
             horizontal_residual_persistence: None,
+            horizontal_residual_normalization_std_override_m: None,
             immediate_triggers: None,
         }
     }
@@ -196,6 +202,21 @@ impl StatisticalMonitor {
         self
     }
 
+    pub fn set_horizontal_residual_persistence(
+        &mut self,
+        config: Option<HorizontalResidualPersistenceConfig>,
+    ) {
+        self.horizontal_residual_persistence = config.map(HorizontalResidualPersistenceState::new);
+    }
+
+    pub fn set_horizontal_residual_normalization_std_override_m(
+        &mut self,
+        horizontal_residual_normalization_std_override_m: Option<f32>,
+    ) {
+        self.horizontal_residual_normalization_std_override_m =
+            horizontal_residual_normalization_std_override_m.map(|value| value.max(1.0e-6));
+    }
+
     pub fn with_immediate_triggers(mut self, config: ImmediateTriggerConfig) -> Self {
         self.immediate_triggers = Some(config);
         self
@@ -207,6 +228,16 @@ impl StatisticalMonitor {
 
     pub const fn risk_accumulator(&self) -> EwmaRiskAccumulator {
         self.risk_accumulator
+    }
+
+    pub fn reset_runtime_state(&mut self) {
+        self.risk_accumulator.reset();
+        if let Some(clock_bias_persistence) = &mut self.clock_bias_persistence {
+            clock_bias_persistence.reset();
+        }
+        if let Some(horizontal_residual_persistence) = &mut self.horizontal_residual_persistence {
+            horizontal_residual_persistence.reset();
+        }
     }
 
     pub fn evaluate_gps_observation(
@@ -355,11 +386,17 @@ impl StatisticalMonitor {
         let horizontal_residual_persistent_score = match &mut self.horizontal_residual_persistence {
             Some(persistence_state) => {
                 let horizontal_residual_norm_m = innovation.fixed_rows::<2>(0).norm();
-                let innovation_position_covariance =
-                    innovation_covariance.fixed_view::<2, 2>(0, 0).into_owned();
-                let horizontal_position_variance_m2 =
-                    innovation_position_covariance.diagonal().amax();
-                let horizontal_position_std_m = sqrtf(horizontal_position_variance_m2).max(1.0e-6);
+                let horizontal_position_std_m =
+                    match self.horizontal_residual_normalization_std_override_m {
+                        Some(override_std_m) => override_std_m,
+                        None => {
+                            let innovation_position_covariance =
+                                innovation_covariance.fixed_view::<2, 2>(0, 0).into_owned();
+                            let horizontal_position_variance_m2 =
+                                innovation_position_covariance.diagonal().amax();
+                            sqrtf(horizontal_position_variance_m2).max(1.0e-6)
+                        }
+                    };
                 Some(
                     persistence_state
                         .update(horizontal_residual_norm_m / horizontal_position_std_m),

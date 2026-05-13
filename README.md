@@ -43,7 +43,7 @@ The repository is in the "prototype with measured simulator and processed-data r
 
 - The Rust crate builds cleanly.
 - The core crate still checks with `--no-default-features`.
-- The library test suite currently passes `28/28`.
+- The library test suite currently passes `30/30`.
 - PX4 SIH paths, a live MAVLink spoof proxy, and a processed TEXBAT harness have been exercised locally.
 
 ## Benchmark Snapshot
@@ -56,6 +56,7 @@ The table below is the shortest honest summary of what has actually been run.
 | PX4 SIH replay, injected spoof | same capture with software-injected GPS offset | anomaly TPR `1.000`, rejected TPR `1.000` | full rejection on one replayed spoof profile |
 | PX4 SIH live MAVLink spoof proxy, abrupt offset | live PX4 SIH stream, spoof onset at `1.5 s` inside the proxy after a `1 s` startup delay | `13/0/17` trusted/flagged/rejected | the measured run rejected on the first spoofed GPS packet; verdicts `#1` through `#14` were clean pre-spoof packets |
 | PX4 SIH live MAVLink spoof proxy, gradual carry-off | live PX4 SIH stream, `30 m` north ramp over `2.5 s` after the same onset timing | `25/4/1` trusted/flagged/rejected | the measured run stayed clean before spoof onset, then accumulated toward rejection and crossed into `Rejected` at verdict `#30` |
+| PX4 SIH live MAVLink spoof proxy, calibrated gradual sweep (opt-in) | live PX4 SIH stream, same proxy path with `--calibrate-live` and a conservative `1.0 m` sigma floor | all five tested ramp durations from `30 m / 2.5 s` through `30 m / 40 s` reached `Rejected` | in the measured software-MITM path, the opt-in calibrated mode lowered the live detection floor while preserving `60/0/0` on one clean nominal live run |
 | TEXBAT `ds2` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.978/0.034` | strong result with lower clean false positives than the earlier fixed-noise proxy |
 | TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.953/0.032` | improved gradual-drift sensitivity after calibrating horizontal residual CUSUM from the clean segment |
 | TEXBAT `ds7` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.999/0.000` | near-complete detection on this processed-dataset scenario after the same calibration |
@@ -123,6 +124,31 @@ Observed on `2026-05-13` using `scripts/wsl_px4_gradual_spoof.sh`:
 | first rejection | verdict `#30` |
 | evidence output | `artifacts/wsl_px4_gradual_spoof_evidence.bin` |
 
+Observed on `2026-05-13` using the same live proxy path with opt-in live warm-up calibration:
+
+| Configuration | Value |
+| --- | --- |
+| detector mode | `--calibrate-live --live-warmup-verdicts 12 --live-calibration-min-sigma-m 1.0 --live-calibration-min-slack-sigma 0.2 --live-calibration-min-threshold 3.0` |
+| fixed-threshold default changed? | no; this remains opt-in |
+| live nominal check | `60 / 0 / 0` trusted / flagged / rejected |
+| replay nominal check | `60 / 0 / 0` trusted / flagged / rejected |
+
+Measured calibrated gradual sweep:
+
+| Ramp profile | Approximate ramp rate | Trusted / Flagged / Rejected | First rejection | Verdicts from onset to rejection |
+| --- | ---: | --- | --- | ---: |
+| `30 m / 2.5 s` | `~12 m/s` | `15 / 0 / 105` | verdict `#16` | `3` |
+| `30 m / 5 s` | `~6 m/s` | `17 / 0 / 103` | verdict `#18` | `4` |
+| `30 m / 10 s` | `~3 m/s` | `18 / 0 / 102` | verdict `#19` | `5` |
+| `30 m / 20 s` | `~1.5 m/s` | `21 / 0 / 99` | verdict `#22` | `8` |
+| `30 m / 40 s` | `~0.75 m/s` | `24 / 0 / 96` | verdict `#25` | `11` |
+
+Method notes:
+
+- the live warm-up path now floors horizontal innovation sigma at `1.0 m` and floors horizontal CUSUM slack / threshold at `0.2 / 3.0`
+- this was added because unconstrained live calibration overfit the hover-noise segment and became too sensitive
+- the calibrated mode improved the measured slow-ramp floor on this live software-MITM path, but it is still not an RF-layer or hardware validation result
+
 ### Processed TEXBAT Replay
 
 Observed on `2026-05-12` using `cargo run --example run_texbat_harness` after downloading processed TEXBAT artifacts:
@@ -151,6 +177,7 @@ The current evidence supports these narrower statements:
 - the monitor path works end to end on live PX4 SIH telemetry
 - the current residual checks rejected the measured abrupt live MAVLink spoof on the first spoofed GPS packet
 - the current gradual carry-off live profile stayed clean before spoof onset, then reached rejection within `15` verdicts of spoof onset without introducing false positives on the nominal replay benchmark
+- the new opt-in live calibration mode lowered the measured live carry-off floor from the earlier `~3-6 m/s` band to at least the tested `~0.75 m/s` profile on the same software-MITM PX4 path while staying clean on one `60`-verdict live nominal run and one `60`-sample replay nominal run
 - the current processed-TEXBAT harness performs strongly on `ds2`, reduces clean false positives on `ds3`, and remains partial on `ds7`
 - the new TEXBAT ablation runs show that the clock-bias path and persistence logic are carrying most of the detection burden on `ds3`
 
