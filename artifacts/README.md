@@ -16,6 +16,7 @@ This directory contains generated datasets, logs, benchmark outputs, sweep expor
 | `artifacts/px4_multi_mission_summary.csv` | `bash scripts/wsl_px4_multi_mission_benchmark.sh 120` | compact multi-mission summary |
 | `artifacts/wsl_px4_live_spoof_evidence.bin` | `bash scripts/wsl_px4_live_spoof.sh` | signed evidence stream from abrupt live software spoof |
 | `artifacts/wsl_px4_gradual_spoof_evidence.bin` | `bash scripts/wsl_px4_gradual_spoof.sh` | signed evidence stream from gradual live software spoof |
+| `artifacts/spoof_suites/` | `cargo run --example run_realistic_spoof_suite -- <dataset>` | generated realistic spoof-profile CSV/JSON summaries |
 
 ## Sweep Artifacts
 

@@ -49,10 +49,10 @@ Observed on `2026-05-13` using `scripts/wsl_px4_multi_mission_benchmark.sh 120`:
 
 | Mission | GPS path summary | Nominal verdicts | Nominal anomaly FPR | Nominal rejected FPR | Standard replayed spoof anomaly / rejected TPR | Worst-case rejected TPR in 144-case sweep | Zero-rejection sweep cases |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `hover` | x `[-0.26, 0.13]`, y `[-0.36, 0.23]`, z `[-6.04, 0.27]`, max speed `2.59 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.951 / 0.676` | `0.000` | `47 / 144` |
-| `forward` | x `[-0.02, 30.94]`, y `[-0.35, 0.27]`, z `[-6.17, 0.15]`, max speed `4.15 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.660 / 0.540` | `0.000` | `53 / 144` |
-| `turn` | x `[-13.00, 11.94]`, y `[-0.06, 24.66]`, z `[-6.10, 0.13]`, max speed `4.79 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.802 / 0.475` | `0.000` | `46 / 144` |
-| `climb` | x `[-0.02, 10.38]`, y `[-0.30, 0.26]`, z `[-19.97, 0.15]`, max speed `3.09 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.554 / 0.455` | `0.000` | `50 / 144` |
+| `hover` | x `[-0.26, 0.13]`, y `[-0.36, 0.23]`, z `[-6.04, 0.27]`, max speed `2.59 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.951 / 0.931` | `0.000` | `16 / 144` |
+| `forward` | x `[-0.02, 30.94]`, y `[-0.35, 0.27]`, z `[-6.17, 0.15]`, max speed `4.15 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.940` | `0.000` | `24 / 144` |
+| `turn` | x `[-13.00, 11.94]`, y `[-0.06, 24.66]`, z `[-6.10, 0.13]`, max speed `4.79 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.921` | `0.000` | `8 / 144` |
+| `climb` | x `[-0.02, 10.38]`, y `[-0.30, 0.26]`, z `[-19.97, 0.15]`, max speed `3.09 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.931` | `0.000` | `24 / 144` |
 
 Structured exports now available per mission:
 
@@ -68,6 +68,24 @@ Structured exports now available per mission:
 The previous turn-regime blocker is now removed on this measured SIH profile: anomaly FPR went from `0.717` to `0.000`, against an acceptance target of below `0.10`. The fix was narrower than the original maneuver-gating hypothesis: heading observations remain implemented, but the PX4 SIH path no longer enables uncalibrated heading checks by default, and persistence warning flags are opt-in for live operator output. The structured sweep still shows broad zero-rejection slow-ramp space across all four mission datasets, so this is not a general robustness claim.
 
 An optional extended adversarial sweep mode is now available through `--extended`. A local smoke run over hover data with two onset times and four ramp durations evaluated `384` cases, preserved nominal `120/0/0` verdicts, and exported CSV/JSON results. This mode adds diagonal, vertical, larger-magnitude, and slower-ramp cases for pre-hardware characterization; it is not part of the published four-mission acceptance table until all mission profiles are rerun in that mode.
+
+### Realistic Spoof-Profile Suite
+
+Observed on `2026-05-13` using `examples/run_realistic_spoof_suite.rs` against the four PX4 SIH mission datasets:
+
+| Profile | Hover rejected TPR | Forward rejected TPR | Turn rejected TPR | Climb rejected TPR | Note |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `texbat_ds1_static_takeover` | `1.000` | `1.000` | `1.000` | `1.000` | caught immediately |
+| `texbat_ds2_overpowered_time_push` | `0.933` | `0.933` | `0.925` | `0.933` | strong generated time-push result |
+| `texbat_ds3_matched_power_slow_carryoff` | `0.742` | `0.725` | `0.733` | `0.733` | partially caught; still difficult |
+| `texbat_ds7_phase_aligned_time_push` | `0.425` | `0.417` | `0.417` | `0.425` | weak generated SIH result |
+| `uav_sdr_takeover_30m_10s` | `0.867` | `0.867` | `0.858` | `0.867` | strong software-defined-spoofer-style result |
+| `uav_freeze_or_hold_last_fix` | `0.000` | `0.000` | `0.000` | `0.000` | not caught in this replay setup |
+| `nav_wrong_turn_cross_track` | `0.867` | `0.867` | `0.858` | `0.867` | strong wrong-turn profile result |
+| `nav_overshoot_along_track` | `0.933` | `0.933` | `0.925` | `0.933` | strong route-overshoot result |
+| `intermittent_pulsed_carryoff` | `0.742` | `0.738` | `0.716` | `0.746` | partially caught |
+
+All four nominal mission datasets stayed at `120 / 0 / 0` trusted/flagged/rejected under the same runner. The suite is generated from measured SIH logs and public attack categories; it is not a replacement for running the actual public UAV/RF datasets.
 
 ### PX4 SIH Live Spoof Proxy
 
@@ -203,9 +221,9 @@ Observed on `2026-05-13`:
 
 | Dataset | Rows x iterations | Throughput | Mean / p95 / max per iteration | Verdicts |
 | --- | ---: | ---: | ---: | ---: |
-| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3928.2 evaluations/s` | `253.90 / 263.35 / 449.50 us` | `60 / 0 / 0` |
+| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3796.6 evaluations/s` | `262.62 / 273.27 / 388.00 us` | `60 / 0 / 0` |
 
-The reported type-size snapshot includes `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `136` bytes, and `SignedEvidencePacket` at `208` bytes. This is host profiling only; target flight hardware remains unmeasured.
+The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `136` bytes, and `SignedEvidencePacket` at `208` bytes. This is host profiling only; target flight hardware remains unmeasured.
 
 ## Limitations
 

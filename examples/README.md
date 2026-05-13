@@ -28,6 +28,8 @@ The `examples/` directory is grouped by purpose rather than by verification stat
   - replay a recorded dataset and summarize nominal vs spoofed behavior
 - `run_adversarial_sweep.rs`
   - evaluate a recorded dataset against default or extended grids of replayed spoof profiles and export JSON / CSV results
+- `run_realistic_spoof_suite.rs`
+  - evaluate a recorded dataset against built-in TEXBAT-like, UAV-spoofer-like, navigation-deception, and intermittent spoof profiles
 - `profile_monitor_dataset.rs`
   - replay a monitor dataset repeatedly to report host-side throughput, latency, and key Rust type sizes
 

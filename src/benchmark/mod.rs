@@ -1,3 +1,4 @@
+pub mod realistic_spoof;
 pub mod sweep;
 
 use core::fmt;
@@ -15,8 +16,8 @@ use crate::{
     ekf_core::state::{ATT_IDX, EskfState, NominalState, POS_IDX, StateCovariance, VEL_IDX},
     statistical_monitor::{
         monitor::{
-            EwmaRiskAccumulator, MonitorError, StatisticalMonitor,
-            VelocityResidualPersistenceConfig,
+            EwmaRiskAccumulator, HorizontalResidualPersistenceConfig, MonitorError,
+            StatisticalMonitor, VelocityResidualPersistenceConfig,
         },
         observation::{
             BarometerObservation, ChiSquareThresholdConfig, GpsObservation, HeadingObservation,
@@ -75,6 +76,12 @@ pub struct MonitorDatasetRow {
     pub barometer_std_m: Option<f32>,
     pub heading_rad: Option<f32>,
     pub heading_std_rad: Option<f32>,
+    #[serde(default)]
+    pub reference_clock_bias_m: Option<f32>,
+    #[serde(default)]
+    pub observed_clock_bias_m: Option<f32>,
+    #[serde(default)]
+    pub clock_bias_std_m: Option<f32>,
     #[serde(default)]
     pub label_spoofed: bool,
 }
@@ -145,6 +152,9 @@ impl MonitorDatasetRow {
                 .heading_observation
                 .as_ref()
                 .map(|observation| observation.heading_std_rad),
+            reference_clock_bias_m: None,
+            observed_clock_bias_m: None,
+            clock_bias_std_m: None,
             label_spoofed: false,
         }
     }
@@ -183,6 +193,28 @@ impl MonitorDatasetRow {
                 heading_rad,
                 heading_std_rad,
             )),
+            _ => None,
+        }
+    }
+
+    pub fn clock_bias_observation(
+        &self,
+    ) -> Option<crate::statistical_monitor::observation::ClockBiasObservation> {
+        match (
+            self.reference_clock_bias_m,
+            self.observed_clock_bias_m,
+            self.clock_bias_std_m,
+        ) {
+            (Some(reference_clock_bias_m), Some(observed_clock_bias_m), Some(clock_bias_std_m)) => {
+                Some(
+                    crate::statistical_monitor::observation::ClockBiasObservation::new(
+                        self.timestamp_s,
+                        reference_clock_bias_m,
+                        observed_clock_bias_m,
+                        clock_bias_std_m,
+                    ),
+                )
+            }
             _ => None,
         }
     }
@@ -410,6 +442,10 @@ where
     I: IntoIterator<Item = MonitorDatasetRow>,
 {
     let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha))
+        .with_clock_bias_persistence(
+            crate::statistical_monitor::monitor::ClockBiasPersistenceConfig::new(0.9, 20.0),
+        )
+        .with_horizontal_residual_persistence(HorizontalResidualPersistenceConfig::new(0.2, 30.0))
         .with_velocity_residual_persistence(VelocityResidualPersistenceConfig::new(1.0, 25.0, 0.5));
     let mut report = MonitorDatasetReport::default();
     let mut evaluation_latencies_us = Vec::new();
@@ -420,11 +456,12 @@ where
 
         let evaluation_started = Instant::now();
         let verdict = monitor
-            .evaluate_observations(
+            .evaluate_observations_with_clock(
                 &row.reconstruct_state(),
                 &row.gps_observation(),
                 row.barometer_observation().as_ref(),
                 row.heading_observation().as_ref(),
+                row.clock_bias_observation().as_ref(),
             )
             .map_err(MonitorDatasetError::Monitor)?;
         evaluation_latencies_us.push(evaluation_started.elapsed().as_secs_f64() * 1_000_000.0);
@@ -618,6 +655,9 @@ mod tests {
                     barometer_std_m: None,
                     heading_rad: None,
                     heading_std_rad: None,
+                    reference_clock_bias_m: None,
+                    observed_clock_bias_m: None,
+                    clock_bias_std_m: None,
                     label_spoofed: false,
                 })
                 .unwrap();
@@ -670,6 +710,9 @@ mod tests {
                     barometer_std_m: None,
                     heading_rad: None,
                     heading_std_rad: None,
+                    reference_clock_bias_m: None,
+                    observed_clock_bias_m: None,
+                    clock_bias_std_m: None,
                     label_spoofed: false,
                 })
                 .unwrap();

@@ -58,3 +58,5 @@ See [scripts/README.md](../scripts/README.md) for the verified shell and PowerSh
   - maturity, risks, and recommended next experiments
 - [REPRODUCE.md](REPRODUCE.md)
   - commands needed to regenerate measured results
+- [SPOOF_DATASETS.md](SPOOF_DATASETS.md)
+  - public spoof datasets, generated spoof profiles, and integration status

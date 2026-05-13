@@ -28,7 +28,7 @@ cargo test --lib
 Successful current result:
 
 ```text
-test result: ok. 34 passed; 0 failed
+test result: ok. 37 passed; 0 failed
 ```
 
 These checks prove the crate builds and the library tests pass on the local development host. They do not measure CPU load, memory use, or scheduling behavior on representative flight hardware.
@@ -154,6 +154,26 @@ How to read the CSV:
 
 The default sweep is the measured four-mission table in the README. The `--extended` sweep adds diagonal, vertical, larger-magnitude, and slower-ramp cases for pre-hardware adversarial characterization. It is deliberately harsher and should not be read as a field result.
 
+## Realistic Spoof-Profile Suite
+
+Run:
+
+```powershell
+cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover
+cargo run --example run_realistic_spoof_suite -- artifacts/px4_forward_dataset.csv --dataset-label px4_forward
+cargo run --example run_realistic_spoof_suite -- artifacts/px4_turn_dataset.csv --dataset-label px4_turn
+cargo run --example run_realistic_spoof_suite -- artifacts/px4_climb_dataset.csv --dataset-label px4_climb
+```
+
+Expected current behavior:
+
+- Nominal verdicts stay `120/0/0` on each mission dataset.
+- Abrupt takeover reaches `1.000` rejected TPR.
+- SDR-style 30 m / 10 s takeover reaches about `0.858-0.867` rejected TPR.
+- Hold-last-fix / frozen GPS remains `0.000` rejected TPR in this replay setup and should be treated as a known gap, not a passed test.
+
+The command writes CSV and JSON under `artifacts/spoof_suites`.
+
 ## Host Monitor Profiling
 
 Run:
@@ -166,8 +186,8 @@ Observed local output:
 
 ```text
 Total monitor evaluations: 3000
-Throughput: 3928.2 evaluations/s
-Latency mean/p95/max per iteration (us): 253.90/263.35/449.50
+Throughput: 3796.6 evaluations/s
+Latency mean/p95/max per iteration (us): 262.62/273.27/388.00
 Final verdict counts: 60/0/0 trusted/flagged/rejected
 ```
 

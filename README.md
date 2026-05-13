@@ -14,7 +14,7 @@ GPS spoofing matters because small autonomous aircraft often trust processed GPS
 | Measured validation | processed TEXBAT replay, PX4 SIH replay, PX4 SIH software MAVLink spoof proxy |
 | Not measured | outdoor receiver logs, real flight, raw IF replay, RF spoofing, target flight hardware CPU/memory |
 | Primary technical risk | processed-navigation monitoring cannot see RF-layer attacks that remain internally consistent through the receiver |
-| New pre-hardware tooling | signed evidence chain-root verification, host profiling, and extended adversarial sweeps |
+| New pre-hardware tooling | signed evidence chain-root verification, host profiling, extended adversarial sweeps, realistic spoof-profile suite |
 | Next evidence needed | target-hardware profiling and outdoor GNSS/IMU nominal data |
 
 See [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) for the risk table and recommended pre-Phase 1 work plan.
@@ -52,12 +52,36 @@ Measured on `2026-05-13` using PX4 Software-In-The-Loop with SIH dynamics:
 
 | Mission | Nominal verdicts | Nominal anomaly FPR | Nominal rejected FPR | Standard injected-spoof anomaly / rejected TPR | Zero-rejection sweep cases |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `hover` | `120 / 0 / 0` | `0.000` | `0.000` | `0.951 / 0.676` | `47 / 144` |
-| `forward` | `120 / 0 / 0` | `0.000` | `0.000` | `0.660 / 0.540` | `53 / 144` |
-| `turn` | `120 / 0 / 0` | `0.000` | `0.000` | `0.802 / 0.475` | `46 / 144` |
-| `climb` | `120 / 0 / 0` | `0.000` | `0.000` | `0.554 / 0.455` | `50 / 144` |
+| `hover` | `120 / 0 / 0` | `0.000` | `0.000` | `0.951 / 0.931` | `16 / 144` |
+| `forward` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.940` | `24 / 144` |
+| `turn` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.921` | `8 / 144` |
+| `climb` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.931` | `24 / 144` |
 
 The previous turn-regime false-positive blocker was `0.717` anomaly FPR. The current measured SIH result is `0.000`, against an acceptance target of below `0.10`. This fix should not be generalized to hardware or high-dynamics flight until those paths are tested.
+
+### Realistic Spoof-Profile Suite
+
+Command:
+
+```powershell
+cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover
+```
+
+Measured on `2026-05-13` across the four PX4 SIH mission datasets:
+
+| Profile family | Representative profile | Anomaly TPR range | Rejected TPR range | Current interpretation |
+| --- | --- | ---: | ---: | --- |
+| abrupt takeover | `texbat_ds1_static_takeover` | `1.000` | `1.000` | caught immediately |
+| overpowered time-push | `texbat_ds2_overpowered_time_push` | `0.933-0.942` | `0.900-0.933` | strong |
+| slow matched-power carry-off | `texbat_ds3_matched_power_slow_carryoff` | `0.725-0.742` | `0.725-0.742` | partially caught, still a hard case |
+| subtle phase-aligned time-push | `texbat_ds7_phase_aligned_time_push` | `0.417-0.425` | `0.417-0.425` | weak in generated SIH profile; processed TEXBAT remains stronger |
+| SDR-style UAV takeover | `uav_sdr_takeover_30m_10s` | `0.858-0.867` | `0.858-0.867` | strong |
+| hold-last-fix / frozen GPS | `uav_freeze_or_hold_last_fix` | `0.000` | `0.000` | not caught in this replay setup |
+| wrong-turn cross-track spoof | `nav_wrong_turn_cross_track` | `0.858-0.867` | `0.858-0.867` | strong |
+| along-track route overshoot | `nav_overshoot_along_track` | `0.958-0.975` | `0.925-0.933` | strong |
+| intermittent carry-off | `intermittent_pulsed_carryoff` | `0.776-0.791` | `0.716-0.746` | partially caught |
+
+This suite is generated from measured SIH mission logs. It is not a substitute for real RF or flight data, but it makes the pre-hardware adversarial coverage broader and more reproducible.
 
 ### Baseline Comparison
 
@@ -133,6 +157,7 @@ Pre-hardware characterization utilities:
 ```powershell
 cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
 cargo run --example run_adversarial_sweep -- artifacts/px4_hover_dataset.csv --dataset-label hover_extended --output-dir artifacts/sweeps --extended --onsets 2.0,4.0 --ramps 0.0,5.0,20.0,40.0
+cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover
 ```
 
 Evidence verification:
@@ -173,6 +198,7 @@ For a step-by-step reproduction guide, see [docs/REPRODUCE.md](docs/REPRODUCE.md
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | what the detector does and does not cover |
 | [docs/BASELINES.md](docs/BASELINES.md) | baseline and ablation tables |
 | [docs/REPRODUCE.md](docs/REPRODUCE.md) | full reproduction guide |
+| [docs/SPOOF_DATASETS.md](docs/SPOOF_DATASETS.md) | public spoof datasets and current integration status |
 | [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) | TRL, risks, and pre-Phase 1 work plan |
 | [docs/benchmark-summary.md](docs/benchmark-summary.md) | compact measured-result record |
 | [docs/verification.md](docs/verification.md) | additional verification notes |
