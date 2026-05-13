@@ -28,7 +28,7 @@ cargo test --lib
 Successful current result:
 
 ```text
-test result: ok. 32 passed; 0 failed
+test result: ok. 34 passed; 0 failed
 ```
 
 These checks prove the crate builds and the library tests pass on the local development host. They do not measure CPU load, memory use, or scheduling behavior on representative flight hardware.
@@ -130,12 +130,48 @@ CSV export: artifacts/sweeps\hover_adversarial_sweep.csv
 JSON export: artifacts/sweeps\hover_adversarial_sweep.json
 ```
 
+Run the broader pre-hardware characterization grid:
+
+```powershell
+cargo run --example run_adversarial_sweep -- artifacts/px4_hover_dataset.csv --dataset-label hover_extended --output-dir artifacts/sweeps --extended --onsets 2.0,4.0 --ramps 0.0,5.0,20.0,40.0
+```
+
+Expected smoke-test output from the current local run:
+
+```text
+Sweep profile: extended
+Cases evaluated: 384
+Nominal trusted/flagged/rejected: 120/0/0
+Nominal anomaly FPR: 0.000
+```
+
 How to read the CSV:
 
 - `scenario_label` names direction, onset, ramp duration, and offset mode.
 - `anomaly_tpr` counts `Flagged` or `Rejected` during spoof-labeled samples.
 - `rejected_tpr` counts only `Rejected` during spoof-labeled samples.
 - `samples_from_onset_to_first_rejection` is empty when a case never reaches rejection.
+
+The default sweep is the measured four-mission table in the README. The `--extended` sweep adds diagonal, vertical, larger-magnitude, and slower-ramp cases for pre-hardware adversarial characterization. It is deliberately harsher and should not be read as a field result.
+
+## Host Monitor Profiling
+
+Run:
+
+```powershell
+cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+```
+
+Observed local output:
+
+```text
+Total monitor evaluations: 3000
+Throughput: 3928.2 evaluations/s
+Latency mean/p95/max per iteration (us): 253.90/263.35/449.50
+Final verdict counts: 60/0/0 trusted/flagged/rejected
+```
+
+This profiles the Rust replay path on the development host. It does not establish target flight-controller CPU load or worst-case execution time.
 
 ## Live PX4 Software Spoof Proxy
 
@@ -182,6 +218,7 @@ Evidence file: artifacts/wsl_px4_live_spoof_evidence.bin
   flagged/rejected verdicts: 17
   first timestamp (ns): 3796000000
   last timestamp (ns): 6700000000
+  evidence chain root: aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36
 ```
 
 If verification fails, the evidence file may be missing, truncated, or modified.

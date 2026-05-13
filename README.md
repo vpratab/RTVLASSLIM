@@ -14,6 +14,7 @@ GPS spoofing matters because small autonomous aircraft often trust processed GPS
 | Measured validation | processed TEXBAT replay, PX4 SIH replay, PX4 SIH software MAVLink spoof proxy |
 | Not measured | outdoor receiver logs, real flight, raw IF replay, RF spoofing, target flight hardware CPU/memory |
 | Primary technical risk | processed-navigation monitoring cannot see RF-layer attacks that remain internally consistent through the receiver |
+| New pre-hardware tooling | signed evidence chain-root verification, host profiling, and extended adversarial sweeps |
 | Next evidence needed | target-hardware profiling and outdoor GNSS/IMU nominal data |
 
 See [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) for the risk table and recommended pre-Phase 1 work plan.
@@ -93,9 +94,10 @@ flowchart LR
     cusum --> verdict
     verdict --> evidence["SHA-256 + Ed25519 signed evidence"]
     evidence --> file["length-framed evidence stream"]
+    file --> root["verifier-computed chain root"]
 ```
 
-The current evidence stream is length-framed and each packet is individually signed. A Merkle root or append-only Merkle accumulator is not implemented in the current source tree.
+The current evidence stream is length-framed and each packet is individually signed. The verifier now computes a deterministic SHA-256 chain root over the signed packet sequence for external anchoring. This is a hash-chain audit root, not a Merkle tree.
 
 ## Reproduce
 
@@ -126,6 +128,13 @@ bash scripts/wsl_px4_live_spoof.sh
 bash scripts/wsl_px4_gradual_spoof.sh
 ```
 
+Pre-hardware characterization utilities:
+
+```powershell
+cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+cargo run --example run_adversarial_sweep -- artifacts/px4_hover_dataset.csv --dataset-label hover_extended --output-dir artifacts/sweeps --extended --onsets 2.0,4.0 --ramps 0.0,5.0,20.0,40.0
+```
+
 Evidence verification:
 
 ```powershell
@@ -141,6 +150,7 @@ Evidence file: artifacts/wsl_px4_live_spoof_evidence.bin
   flagged/rejected verdicts: 17
   first timestamp (ns): 3796000000
   last timestamp (ns): 6700000000
+  evidence chain root: aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36
 ```
 
 For a step-by-step reproduction guide, see [docs/REPRODUCE.md](docs/REPRODUCE.md).

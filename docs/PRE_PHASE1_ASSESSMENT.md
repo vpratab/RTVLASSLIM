@@ -16,7 +16,7 @@ The prototype has encouraging simulator and processed-dataset results, especiall
 | `GPS_RAW_INT` | MAVLink GPS status/accuracy/position metadata, not raw IF or raw pseudorange processing. |
 | GPS fusion | The current monitor compares GPS against the propagated ESKF state; it does not fuse accepted GPS back into the ESKF state as a flight-control navigation filter. |
 | Target hardware latency | Not measured. Host/SITL benchmark latency is measured, but CPU load on NuttX, PX4 hardware, or representative ARM boards is not. |
-| Merkle evidence log | Not implemented. Current evidence is length-framed and Ed25519-signed per packet. |
+| Evidence audit root | Implemented as a verifier-computed SHA-256 chain root over signed framed packets; not a Merkle tree or external timestamp anchor. |
 | Platform support | Code targets common MAVLink messages; measured platform path is PX4 SIH only. |
 | Production readiness | Not production ready, not certified, and not field validated. |
 
@@ -31,7 +31,8 @@ The prototype has encouraging simulator and processed-dataset results, especiall
 | PX4 SIH multi-mission | `bash scripts/wsl_px4_multi_mission_benchmark.sh 120` | hover/forward/turn/climb nominal anomaly FPR `0.000` |
 | Live software MAVLink abrupt spoof | `bash scripts/wsl_px4_live_spoof.sh` | `13/2/15` trusted/flagged/rejected |
 | Live software MAVLink gradual spoof | `bash scripts/wsl_px4_gradual_spoof.sh` | `25/6/14` trusted/flagged/rejected |
-| Evidence verification | `cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin` | 30 packets verified, 13 trusted, 17 flagged/rejected |
+| Evidence verification | `cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin` | 30 packets verified, 13 trusted, 17 flagged/rejected, chain root `aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36` |
+| Host monitor profiling | `cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50` | 3000 monitor evaluations, `3928.2 eval/s`, mean/p95/max `253.90/263.35/449.50 us` on the local host |
 
 ## Technical Maturity
 
@@ -84,12 +85,12 @@ Any table with external paper TPR/FPR numbers should include exact citations and
 | --- | --- | --- | --- |
 | No real flight validation | high | critical | collect outdoor GNSS/IMU logs, then fly controlled hardware tests |
 | No raw IF / RF-layer coverage | high | high | pair RTVLAS-Slim with receiver/RF-layer monitoring; do not sell it as RF detection |
-| Target hardware performance unknown | medium | high | benchmark on representative ARM/PX4 companion hardware |
+| Target hardware performance unknown | medium | high | benchmark on representative ARM/PX4 companion hardware; current host profiling is not a substitute |
 | Threshold transfer across vehicles unknown | medium | high | calibrate per mission class; add adaptive threshold studies |
 | Slow carry-off evasion remains in sweep | medium | high | expand adversarial sweep and test velocity/clock variants |
 | False alarms under real vibration/multipath unknown | medium | high | collect outdoor nominal logs across environments |
 | Signing key storage is mock/software-backed | medium | medium | define TPM/HSM/secure-element path before field demo |
-| Evidence lacks hash chain/Merkle anchoring | medium | medium | add optional chain hash or Merkle root if audit integrity becomes a primary claim |
+| Evidence chain root is not externally anchored | medium | medium | record chain roots outside the evidence file and add timestamping or Merkle anchoring if audit integrity becomes a primary claim |
 | Certification evidence absent | high | medium | keep safety-critical claims out of Phase 1; document test methodology now |
 
 ## Pre-Phase 1 Work Plan
@@ -101,8 +102,8 @@ The highest-value next experiments are:
 3. Hardware-in-the-loop replay: replay measured telemetry through the MAVLink adapter at real rates and compare against CSV replay results.
 4. Dynamic trajectory expansion: add aggressive turn, climb/descent, wind, vibration, and weak-GPS simulator profiles before claiming general flight-regime robustness.
 5. Raw IF feasibility study: process raw TEXBAT or equivalent IF data through GNSS-SDR to understand what RTVLAS-Slim misses at the receiver layer.
-6. Adversarial sweep expansion: include intermittent spoofing, stepped drift, low-rate carry-off below current detection floor, and position-plus-velocity profiles.
-7. Evidence hardening: archive raw telemetry next to signed verdicts, add chain hashing or Merkle anchoring, and move signing keys into a hardware-backed provider.
+6. Adversarial sweep expansion: include intermittent spoofing, stepped drift, low-rate carry-off below current detection floor, vertical axes, diagonal axes, and position-plus-velocity profiles.
+7. Evidence hardening: archive raw telemetry next to signed verdicts, externally anchor the chain root, and move signing keys into a hardware-backed provider.
 
 ## Phase 1 Framing
 

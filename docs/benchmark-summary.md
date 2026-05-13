@@ -22,6 +22,7 @@ The goal is to separate:
 | raw TEXBAT IF replay | raw IF captures | receiver-level spoofing path | not implemented |
 | paired IMU + TEXBAT replay | external paired sensor data | integrated inertial replay | not implemented |
 | hardware flight test | live vehicle telemetry | real platform conditions | not implemented |
+| host monitor profiling | recorded monitor dataset | no attack; compute characterization only | exercised |
 
 ## Measured Results
 
@@ -65,6 +66,8 @@ Structured exports now available per mission:
 - `artifacts/sweeps/px4_climb_adversarial_sweep.json`
 
 The previous turn-regime blocker is now removed on this measured SIH profile: anomaly FPR went from `0.717` to `0.000`, against an acceptance target of below `0.10`. The fix was narrower than the original maneuver-gating hypothesis: heading observations remain implemented, but the PX4 SIH path no longer enables uncalibrated heading checks by default, and persistence warning flags are opt-in for live operator output. The structured sweep still shows broad zero-rejection slow-ramp space across all four mission datasets, so this is not a general robustness claim.
+
+An optional extended adversarial sweep mode is now available through `--extended`. A local smoke run over hover data with two onset times and four ramp durations evaluated `384` cases, preserved nominal `120/0/0` verdicts, and exported CSV/JSON results. This mode adds diagonal, vertical, larger-magnitude, and slower-ramp cases for pre-hardware characterization; it is not part of the published four-mission acceptance table until all mission profiles are rerun in that mode.
 
 ### PX4 SIH Live Spoof Proxy
 
@@ -184,6 +187,25 @@ Observed on `2026-05-13`:
 - packets verified: `30`
 - trusted verdicts: `13`
 - flagged/rejected verdicts: `17`
+- evidence chain root: `aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36`
+
+The verifier computes this root over the signed framed packet sequence. It is a hash-chain audit root suitable for external recording, not a Merkle tree and not a hardware-backed timestamp.
+
+### Host Monitor Profiling
+
+The replay monitor can be profiled without PX4 using:
+
+```powershell
+cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+```
+
+Observed on `2026-05-13`:
+
+| Dataset | Rows x iterations | Throughput | Mean / p95 / max per iteration | Verdicts |
+| --- | ---: | ---: | ---: | ---: |
+| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3928.2 evaluations/s` | `253.90 / 263.35 / 449.50 us` | `60 / 0 / 0` |
+
+The reported type-size snapshot includes `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `136` bytes, and `SignedEvidencePacket` at `208` bytes. This is host profiling only; target flight hardware remains unmeasured.
 
 ## Limitations
 

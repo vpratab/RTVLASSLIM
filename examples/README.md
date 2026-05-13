@@ -27,7 +27,9 @@ The `examples/` directory is grouped by purpose rather than by verification stat
 - `run_monitor_benchmark.rs`
   - replay a recorded dataset and summarize nominal vs spoofed behavior
 - `run_adversarial_sweep.rs`
-  - evaluate a recorded dataset against a structured grid of replayed spoof profiles and export JSON / CSV results
+  - evaluate a recorded dataset against default or extended grids of replayed spoof profiles and export JSON / CSV results
+- `profile_monitor_dataset.rs`
+  - replay a monitor dataset repeatedly to report host-side throughput, latency, and key Rust type sizes
 
 ## External Replay Drivers
 

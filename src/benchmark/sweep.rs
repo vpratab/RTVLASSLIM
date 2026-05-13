@@ -164,6 +164,73 @@ pub fn build_default_sweep_cases(
     cases
 }
 
+pub fn build_extended_sweep_cases(
+    onset_times_s: &[f64],
+    ramp_durations_s: &[f64],
+) -> Vec<SweepCase> {
+    let directions = [
+        ("north", Vector3::new(1.0_f32, 0.0, 0.0)),
+        ("east", Vector3::new(0.0_f32, 1.0, 0.0)),
+        ("south", Vector3::new(-1.0_f32, 0.0, 0.0)),
+        ("west", Vector3::new(0.0_f32, -1.0, 0.0)),
+        (
+            "northeast",
+            Vector3::new(0.707_106_77_f32, 0.707_106_77, 0.0),
+        ),
+        (
+            "northwest",
+            Vector3::new(0.707_106_77_f32, -0.707_106_77, 0.0),
+        ),
+        ("up", Vector3::new(0.0_f32, 0.0, -1.0)),
+        ("down", Vector3::new(0.0_f32, 0.0, 1.0)),
+    ];
+    let magnitudes_m = [10.0_f32, 30.0, 60.0];
+    let mut cases = Vec::new();
+
+    for &onset_time_s in onset_times_s {
+        for &ramp_duration_s in ramp_durations_s {
+            for &magnitude_m in &magnitudes_m {
+                for (direction_label, unit_direction) in directions {
+                    let position_offset_ned_m = unit_direction * magnitude_m;
+                    let magnitude_label = format_magnitude_label(magnitude_m);
+                    let position_label = format!(
+                        "{direction_label}_{magnitude_label}m_onset_{onset_time_s:.1}_ramp_{ramp_duration_s:.1}_pos"
+                    );
+                    cases.push(SweepCase::new(
+                        position_label,
+                        onset_time_s,
+                        ramp_duration_s,
+                        direction_label,
+                        "position_only",
+                        position_offset_ned_m,
+                        Vector3::zeros(),
+                    ));
+
+                    let velocity_offset_ned_mps = if ramp_duration_s <= f64::EPSILON {
+                        unit_direction * 8.0
+                    } else {
+                        position_offset_ned_m / ramp_duration_s as f32
+                    };
+                    let position_velocity_label = format!(
+                        "{direction_label}_{magnitude_label}m_onset_{onset_time_s:.1}_ramp_{ramp_duration_s:.1}_posvel"
+                    );
+                    cases.push(SweepCase::new(
+                        position_velocity_label,
+                        onset_time_s,
+                        ramp_duration_s,
+                        direction_label,
+                        "position_plus_velocity",
+                        position_offset_ned_m,
+                        velocity_offset_ned_mps,
+                    ));
+                }
+            }
+        }
+    }
+
+    cases
+}
+
 pub fn run_adversarial_sweep(
     rows: &[MonitorDatasetRow],
     dataset_label: &str,
@@ -209,6 +276,14 @@ pub fn run_adversarial_sweep(
         nominal_report: nominal_row,
         results,
     })
+}
+
+fn format_magnitude_label(magnitude_m: f32) -> String {
+    if (magnitude_m.fract()).abs() <= f32::EPSILON {
+        format!("{magnitude_m:.0}")
+    } else {
+        format!("{magnitude_m:.1}")
+    }
 }
 
 pub fn write_sweep_csv<P: AsRef<Path>>(
@@ -303,5 +378,30 @@ fn result_row_from_report(
         mean_evaluation_latency_us: report.mean_evaluation_latency_us,
         p95_evaluation_latency_us: report.p95_evaluation_latency_us,
         max_evaluation_latency_us: report.max_evaluation_latency_us,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_extended_sweep_cases;
+
+    #[test]
+    fn extended_sweep_covers_axes_magnitudes_and_offset_modes() {
+        let cases = build_extended_sweep_cases(&[2.0, 4.0], &[0.0, 40.0]);
+
+        assert_eq!(cases.len(), 2 * 2 * 3 * 8 * 2);
+        assert!(cases.iter().any(|case| case.direction_label == "up"));
+        assert!(cases.iter().any(|case| case.direction_label == "down"));
+        assert!(cases.iter().any(|case| case.direction_label == "south"));
+        assert!(
+            cases
+                .iter()
+                .any(|case| case.offset_mode_label == "position_plus_velocity")
+        );
+        assert!(
+            cases
+                .iter()
+                .any(|case| case.label == "north_60m_onset_4.0_ramp_40.0_posvel")
+        );
     }
 }

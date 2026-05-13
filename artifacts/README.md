@@ -51,7 +51,10 @@ Evidence file: artifacts/wsl_px4_live_spoof_evidence.bin
   flagged/rejected verdicts: 17
   first timestamp (ns): 3796000000
   last timestamp (ns): 6700000000
+  evidence chain root: aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36
 ```
+
+The chain root is computed by the verifier over the signed framed packet sequence. It is useful for external anchoring or comparison between evidence files, but it is not a Merkle tree and it is not externally anchored by this repository.
 
 ## Notes
 

@@ -18,6 +18,9 @@ cargo run --example gps_spoof
 cargo run --example run_validation
 cargo run --example run_texbat_harness
 cargo run --example run_adversarial_sweep -- artifacts/px4_monitor_dataset.csv --dataset-label px4_capture --output-dir artifacts/sweeps
+cargo run --example run_adversarial_sweep -- artifacts/px4_hover_dataset.csv --dataset-label hover_extended --output-dir artifacts/sweeps --extended --onsets 2.0,4.0 --ramps 0.0,5.0,20.0,40.0
+cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin
 ```
 
 ## WSL PX4 Paths

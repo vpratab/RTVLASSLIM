@@ -4,8 +4,8 @@ use rtvlas::{
     benchmark::{
         load_monitor_dataset_rows_file,
         sweep::{
-            build_default_sweep_cases, run_adversarial_sweep, write_sweep_csv, write_sweep_json,
-            write_worst_case_summary,
+            build_default_sweep_cases, build_extended_sweep_cases, run_adversarial_sweep,
+            write_sweep_csv, write_sweep_json, write_worst_case_summary,
         },
     },
     statistical_monitor::observation::ChiSquareThresholdConfig,
@@ -41,10 +41,15 @@ fn run() -> Result<(), String> {
     let onset_times_s = parse_f64_list("--onsets").unwrap_or_else(|| vec![2.0, 4.0, 6.0]);
     let ramp_durations_s =
         parse_f64_list("--ramps").unwrap_or_else(|| vec![0.0, 1.0, 2.5, 5.0, 10.0, 20.0]);
+    let extended = flag_present("--extended");
 
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
     let rows = load_monitor_dataset_rows_file(&dataset_path).map_err(|error| error.to_string())?;
-    let cases = build_default_sweep_cases(&onset_times_s, &ramp_durations_s);
+    let cases = if extended {
+        build_extended_sweep_cases(&onset_times_s, &ramp_durations_s)
+    } else {
+        build_default_sweep_cases(&onset_times_s, &ramp_durations_s)
+    };
     let report = run_adversarial_sweep(&rows, &dataset_label, &cases, thresholds, ewma_alpha)
         .map_err(|error| error.to_string())?;
 
@@ -55,6 +60,10 @@ fn run() -> Result<(), String> {
 
     println!("Dataset: {}", dataset_path.display());
     println!("Dataset label: {dataset_label}");
+    println!(
+        "Sweep profile: {}",
+        if extended { "extended" } else { "default" }
+    );
     println!("Cases evaluated: {}", report.results.len());
     println!(
         "Nominal trusted/flagged/rejected: {}/{}/{}",
@@ -71,6 +80,10 @@ fn run() -> Result<(), String> {
     println!("JSON export: {}", json_path.display());
 
     Ok(())
+}
+
+fn flag_present(flag: &str) -> bool {
+    std::env::args().skip(1).any(|argument| argument == flag)
 }
 
 fn argument_value(flag: &str) -> Option<String> {

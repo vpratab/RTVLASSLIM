@@ -67,6 +67,7 @@ pub struct FramedEvidenceSummary {
     pub flagged_or_rejected_verdicts: u64,
     pub first_timestamp_ns: Option<u64>,
     pub last_timestamp_ns: Option<u64>,
+    pub evidence_chain_root: [u8; 32],
 }
 
 pub trait SecureElement {
@@ -247,11 +248,41 @@ pub fn decode_framed_evidence_bytes(
 pub fn verify_framed_evidence_bytes(
     bytes: &[u8],
 ) -> Result<FramedEvidenceSummary, AttestationError> {
-    let packets = decode_framed_evidence_bytes(bytes)?;
     let mut summary = FramedEvidenceSummary::default();
+    let mut offset = 0_usize;
 
-    for packet in packets {
+    while offset < bytes.len() {
+        let prefix_end = offset + 4;
+        if prefix_end > bytes.len() {
+            return Err(AttestationError::FramedEvidenceTruncated {
+                offset,
+                expected_bytes: 4,
+                available_bytes: bytes.len().saturating_sub(offset),
+            });
+        }
+
+        let packet_length = u32::from_le_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize;
+        offset = prefix_end;
+
+        let packet_end = offset + packet_length;
+        if packet_end > bytes.len() {
+            return Err(AttestationError::FramedEvidenceTruncated {
+                offset,
+                expected_bytes: packet_length,
+                available_bytes: bytes.len().saturating_sub(offset),
+            });
+        }
+
+        let packet_bytes = &bytes[offset..packet_end];
+        let packet = deserialize_evidence(packet_bytes)?;
         verify_evidence(&packet)?;
+        summary.evidence_chain_root =
+            chained_evidence_root(summary.evidence_chain_root, packet_bytes);
         summary.total_packets += 1;
         if packet.evidence.physics_verdict {
             summary.trusted_verdicts += 1;
@@ -273,6 +304,7 @@ pub fn verify_framed_evidence_bytes(
                     current.max(packet.evidence.timestamp_ns)
                 }),
         );
+        offset = packet_end;
     }
 
     Ok(summary)
@@ -366,6 +398,18 @@ fn sha256_digest(bytes: &[u8]) -> [u8; 32] {
     output
 }
 
+#[cfg(feature = "std")]
+fn chained_evidence_root(previous_root: [u8; 32], packet_bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(previous_root);
+    hasher.update((packet_bytes.len() as u64).to_le_bytes());
+    hasher.update(packet_bytes);
+    let digest = hasher.finalize();
+    let mut output = [0_u8; 32];
+    output.copy_from_slice(&digest);
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use nalgebra::{UnitQuaternion, Vector3};
@@ -448,6 +492,7 @@ mod tests {
         assert_eq!(summary.total_packets, 2);
         assert_eq!(summary.trusted_verdicts, 1);
         assert_eq!(summary.flagged_or_rejected_verdicts, 1);
+        assert_ne!(summary.evidence_chain_root, [0_u8; 32]);
     }
 
     #[test]
@@ -462,6 +507,29 @@ mod tests {
         bytes[final_payload_index] ^= 0x01;
 
         assert!(verify_framed_evidence_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn framed_evidence_chain_root_depends_on_packet_sequence() {
+        let secure_element = InMemorySecureElement::new([7_u8; 32]);
+        let provider = Ed25519AttestationProvider::new(secure_element);
+        let trusted = provider
+            .sign_evidence(&build_evidence_packet(TrustLevel::Trusted))
+            .unwrap();
+        let rejected = provider
+            .sign_evidence(&build_evidence_packet(TrustLevel::Rejected))
+            .unwrap();
+
+        let original =
+            verify_framed_evidence_bytes(&framed_bytes(&[trusted.clone(), rejected.clone()]))
+                .unwrap();
+        let reversed =
+            verify_framed_evidence_bytes(&framed_bytes(&[rejected.clone(), trusted.clone()]))
+                .unwrap();
+        let deleted = verify_framed_evidence_bytes(&framed_bytes(&[trusted])).unwrap();
+
+        assert_ne!(original.evidence_chain_root, reversed.evidence_chain_root);
+        assert_ne!(original.evidence_chain_root, deleted.evidence_chain_root);
     }
 
     fn build_evidence_packet(trust_level: TrustLevel) -> EvidencePacket {
