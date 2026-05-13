@@ -5,7 +5,8 @@ use mavlink::{
     MavConnection, MavHeader, MessageData, connect,
     dialects::common::{
         COMMAND_LONG_DATA, GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, GpsFixType, HEARTBEAT_DATA,
-        HIGHRES_IMU_DATA, MavAutopilot, MavCmd, MavMessage, MavModeFlag, MavState, MavType,
+        HIGHRES_IMU_DATA, MavAutopilot, MavCmd, MavFrame, MavMessage, MavModeFlag, MavState,
+        MavType, PositionTargetTypemask, SET_POSITION_TARGET_LOCAL_NED_DATA,
     },
     error::{MessageReadError, MessageWriteError},
 };
@@ -30,6 +31,7 @@ const DEFAULT_GCS_SYSTEM_ID: u8 = 255;
 const DEFAULT_GCS_COMPONENT_ID: u8 = 190;
 const DEFAULT_PX4_TARGET_SYSTEM_ID: u8 = 1;
 const DEFAULT_PX4_TARGET_COMPONENT_ID: u8 = 1;
+const PX4_CUSTOM_MAIN_MODE_OFFBOARD: f32 = 6.0;
 const HIGHRES_IMU_INTERVAL_US: i32 = 10_000;
 const GLOBAL_POSITION_INT_INTERVAL_US: i32 = 100_000;
 const GPS_RAW_INT_INTERVAL_US: i32 = 200_000;
@@ -217,6 +219,56 @@ impl MavlinkSubscriber {
                 .send(&header, &command)
                 .map_err(TelemetryError::MavlinkWriteError)?;
         }
+        Ok(())
+    }
+
+    pub fn arm_vehicle(&self) -> Result<(), TelemetryError> {
+        self.send_command_long(MavCmd::MAV_CMD_COMPONENT_ARM_DISARM, 1.0, 0.0, 0.0)
+    }
+
+    pub fn set_offboard_mode(&self) -> Result<(), TelemetryError> {
+        self.send_command_long(
+            MavCmd::MAV_CMD_DO_SET_MODE,
+            MavModeFlag::MAV_MODE_FLAG_CUSTOM_MODE_ENABLED.bits() as f32,
+            PX4_CUSTOM_MAIN_MODE_OFFBOARD,
+            0.0,
+        )
+    }
+
+    pub fn send_local_position_setpoint(
+        &self,
+        time_boot_ms: u32,
+        position_ned_m: Vector3<f32>,
+        yaw_rad: f32,
+    ) -> Result<(), TelemetryError> {
+        let setpoint =
+            MavMessage::SET_POSITION_TARGET_LOCAL_NED(SET_POSITION_TARGET_LOCAL_NED_DATA {
+                time_boot_ms,
+                x: position_ned_m.x,
+                y: position_ned_m.y,
+                z: position_ned_m.z,
+                vx: 0.0,
+                vy: 0.0,
+                vz: 0.0,
+                afx: 0.0,
+                afy: 0.0,
+                afz: 0.0,
+                yaw: yaw_rad,
+                yaw_rate: 0.0,
+                type_mask: PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VX_IGNORE
+                    | PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VY_IGNORE
+                    | PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VZ_IGNORE
+                    | PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AX_IGNORE
+                    | PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AY_IGNORE
+                    | PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AZ_IGNORE
+                    | PositionTargetTypemask::POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE,
+                target_system: DEFAULT_PX4_TARGET_SYSTEM_ID,
+                target_component: DEFAULT_PX4_TARGET_COMPONENT_ID,
+                coordinate_frame: MavFrame::MAV_FRAME_LOCAL_NED,
+            });
+        self.connection
+            .send(&outbound_header(), &setpoint)
+            .map_err(TelemetryError::MavlinkWriteError)?;
         Ok(())
     }
 
@@ -504,6 +556,32 @@ impl MavlinkSubscriber {
         }
 
         Ok(None)
+    }
+
+    fn send_command_long(
+        &self,
+        command: MavCmd,
+        param1: f32,
+        param2: f32,
+        param3: f32,
+    ) -> Result<(), TelemetryError> {
+        let command = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
+            target_system: DEFAULT_PX4_TARGET_SYSTEM_ID,
+            target_component: DEFAULT_PX4_TARGET_COMPONENT_ID,
+            command,
+            confirmation: 0,
+            param1,
+            param2,
+            param3,
+            param4: 0.0,
+            param5: 0.0,
+            param6: 0.0,
+            param7: 0.0,
+        });
+        self.connection
+            .send(&outbound_header(), &command)
+            .map_err(TelemetryError::MavlinkWriteError)?;
+        Ok(())
     }
 }
 

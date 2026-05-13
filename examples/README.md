@@ -23,9 +23,11 @@ The `examples/` directory is grouped by purpose rather than by verification stat
 ## Benchmark / Capture Drivers
 
 - `capture_monitor_dataset.rs`
-  - record synchronized monitor inputs from PX4 telemetry
+  - record synchronized monitor inputs from PX4 telemetry, optionally while driving a simple offboard mission profile (`hover`, `forward`, `turn`, `climb`)
 - `run_monitor_benchmark.rs`
   - replay a recorded dataset and summarize nominal vs spoofed behavior
+- `run_adversarial_sweep.rs`
+  - evaluate a recorded dataset against a structured grid of replayed spoof profiles and export JSON / CSV results
 
 ## External Replay Drivers
 

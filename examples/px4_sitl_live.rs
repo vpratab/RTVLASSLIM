@@ -50,8 +50,8 @@ fn run() -> Result<(), String> {
         .map(|value| value.parse::<usize>().map_err(|error| error.to_string()))
         .transpose()?
         .unwrap_or(12);
-    let live_calibration_min_sigma_m = optional_f32_argument("--live-calibration-min-sigma-m")?
-        .unwrap_or(1.0);
+    let live_calibration_min_sigma_m =
+        optional_f32_argument("--live-calibration-min-sigma-m")?.unwrap_or(1.0);
     let live_calibration_min_slack_sigma =
         optional_f32_argument("--live-calibration-min-slack-sigma")?.unwrap_or(0.2);
     let live_calibration_min_threshold =
@@ -59,8 +59,7 @@ fn run() -> Result<(), String> {
 
     if calibrate_live && disable_horizontal_persistence {
         return Err(
-            "--calibrate-live cannot be combined with --disable-horizontal-persistence"
-                .to_owned(),
+            "--calibrate-live cannot be combined with --disable-horizontal-persistence".to_owned(),
         );
     }
     if calibrate_live
@@ -338,6 +337,7 @@ fn optional_f32_argument(flag: &str) -> Result<Option<f32>, String> {
 }
 
 fn format_optional_score(value: Option<f32>) -> String {
-    value.map(|value| format!("{value:.3}"))
+    value
+        .map(|value| format!("{value:.3}"))
         .unwrap_or_else(|| "n/a".to_owned())
 }

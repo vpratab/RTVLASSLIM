@@ -294,7 +294,8 @@ impl LiveWarmupCalibrationState {
             return self.report;
         }
 
-        self.horizontal_residual_samples_m.push(horizontal_residual_m);
+        self.horizontal_residual_samples_m
+            .push(horizontal_residual_m);
         if self.horizontal_residual_samples_m.len() < self.config.warmup_verdicts {
             return None;
         }
@@ -317,7 +318,8 @@ impl LiveWarmupCalibrationState {
         let mut score = 0.0_f32;
         let mut clean_score_ceiling = 0.0_f32;
         for normalized_horizontal_residual in normalized_horizontal_residuals {
-            score = (score + normalized_horizontal_residual - horizontal_cusum_slack_sigma).max(0.0);
+            score =
+                (score + normalized_horizontal_residual - horizontal_cusum_slack_sigma).max(0.0);
             clean_score_ceiling = clean_score_ceiling.max(score);
         }
         let horizontal_cusum_threshold = (clean_score_ceiling + horizontal_cusum_slack_sigma)
@@ -360,10 +362,7 @@ where
         }
     }
 
-    pub fn with_live_warmup_calibration(
-        mut self,
-        config: LiveWarmupCalibrationConfig,
-    ) -> Self {
+    pub fn with_live_warmup_calibration(mut self, config: LiveWarmupCalibrationConfig) -> Self {
         self.live_warmup_calibration = Some(LiveWarmupCalibrationState::new(config));
         self
     }

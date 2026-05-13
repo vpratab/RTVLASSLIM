@@ -1,3 +1,5 @@
+pub mod sweep;
+
 use core::fmt;
 use std::{
     fs::File,
@@ -294,6 +296,11 @@ pub struct MonitorDatasetReport {
     pub mean_evaluation_latency_us: f64,
     pub p95_evaluation_latency_us: f64,
     pub max_evaluation_latency_us: f64,
+    pub first_spoof_labeled_sample_index: Option<u64>,
+    pub first_anomaly_sample_index: Option<u64>,
+    pub first_rejected_sample_index: Option<u64>,
+    pub samples_from_onset_to_first_anomaly: Option<u64>,
+    pub samples_from_onset_to_first_rejection: Option<u64>,
 }
 
 impl MonitorDatasetReport {
@@ -336,8 +343,8 @@ pub fn run_monitor_dataset_file<P: AsRef<Path>>(
     thresholds: ChiSquareThresholdConfig,
     ewma_alpha: f32,
 ) -> Result<MonitorDatasetReport, MonitorDatasetError> {
-    let file = File::open(path).map_err(MonitorDatasetError::Io)?;
-    run_monitor_dataset_reader(file, thresholds, ewma_alpha)
+    let rows = load_monitor_dataset_rows_file(path)?;
+    run_monitor_dataset_rows(rows, thresholds, ewma_alpha)
 }
 
 pub fn run_monitor_dataset_reader<R: Read>(
@@ -345,13 +352,66 @@ pub fn run_monitor_dataset_reader<R: Read>(
     thresholds: ChiSquareThresholdConfig,
     ewma_alpha: f32,
 ) -> Result<MonitorDatasetReport, MonitorDatasetError> {
+    let rows = load_monitor_dataset_rows_reader(reader)?;
+    run_monitor_dataset_rows(rows, thresholds, ewma_alpha)
+}
+
+pub fn load_monitor_dataset_rows_file<P: AsRef<Path>>(
+    path: P,
+) -> Result<Vec<MonitorDatasetRow>, MonitorDatasetError> {
+    let file = File::open(path).map_err(MonitorDatasetError::Io)?;
+    load_monitor_dataset_rows_reader(file)
+}
+
+pub fn load_monitor_dataset_rows_reader<R: Read>(
+    reader: R,
+) -> Result<Vec<MonitorDatasetRow>, MonitorDatasetError> {
     let mut csv_reader = csv::Reader::from_reader(reader);
+    let mut rows = Vec::new();
+    for row in csv_reader.deserialize::<MonitorDatasetRow>() {
+        rows.push(row.map_err(MonitorDatasetError::Csv)?);
+    }
+    Ok(rows)
+}
+
+pub fn spoof_monitor_dataset_rows(
+    rows: &[MonitorDatasetRow],
+    config: SpoofInjectionConfig,
+) -> Vec<MonitorDatasetRow> {
+    rows.iter()
+        .cloned()
+        .map(|mut row| {
+            let scale = spoof_scale(row.timestamp_s, config);
+            if scale > 0.0 {
+                row.gps_px_ned_m += config.position_offset_ned_m.x * scale;
+                row.gps_py_ned_m += config.position_offset_ned_m.y * scale;
+                row.gps_pz_ned_m += config.position_offset_ned_m.z * scale;
+                row.gps_vx_ned_mps += config.velocity_offset_ned_mps.x * scale;
+                row.gps_vy_ned_mps += config.velocity_offset_ned_mps.y * scale;
+                row.gps_vz_ned_mps += config.velocity_offset_ned_mps.z * scale;
+                row.label_spoofed = true;
+            } else {
+                row.label_spoofed = false;
+            }
+            row
+        })
+        .collect()
+}
+
+pub fn run_monitor_dataset_rows<I>(
+    rows: I,
+    thresholds: ChiSquareThresholdConfig,
+    ewma_alpha: f32,
+) -> Result<MonitorDatasetReport, MonitorDatasetError>
+where
+    I: IntoIterator<Item = MonitorDatasetRow>,
+{
     let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha));
     let mut report = MonitorDatasetReport::default();
     let mut evaluation_latencies_us = Vec::new();
 
-    for row in csv_reader.deserialize::<MonitorDatasetRow>() {
-        let row = row.map_err(MonitorDatasetError::Csv)?;
+    for (index, row) in rows.into_iter().enumerate() {
+        let sample_index = index as u64 + 1;
         report.total_samples += 1;
 
         let evaluation_started = Instant::now();
@@ -371,27 +431,47 @@ pub fn run_monitor_dataset_reader<R: Read>(
             TrustLevel::Rejected => report.rejected_verdicts += 1,
         }
 
+        let is_anomaly = matches!(
+            verdict.trust_level,
+            TrustLevel::Flagged | TrustLevel::Rejected
+        );
+        let is_rejected = matches!(verdict.trust_level, TrustLevel::Rejected);
+
         if row.label_spoofed {
             report.spoof_labeled_samples += 1;
-            if matches!(
-                verdict.trust_level,
-                TrustLevel::Flagged | TrustLevel::Rejected
-            ) {
+            let first_spoof_index = *report
+                .first_spoof_labeled_sample_index
+                .get_or_insert(sample_index);
+
+            if is_anomaly {
                 report.anomaly_true_positives += 1;
+                if report.first_anomaly_sample_index.is_none() {
+                    report.first_anomaly_sample_index = Some(sample_index);
+                    report.samples_from_onset_to_first_anomaly =
+                        Some(sample_index - first_spoof_index + 1);
+                }
             }
-            if matches!(verdict.trust_level, TrustLevel::Rejected) {
+            if is_rejected {
                 report.rejected_true_positives += 1;
+                if report.first_rejected_sample_index.is_none() {
+                    report.first_rejected_sample_index = Some(sample_index);
+                    report.samples_from_onset_to_first_rejection =
+                        Some(sample_index - first_spoof_index + 1);
+                }
             }
         } else {
             report.clean_labeled_samples += 1;
-            if matches!(
-                verdict.trust_level,
-                TrustLevel::Flagged | TrustLevel::Rejected
-            ) {
+            if is_anomaly {
                 report.anomaly_false_positives += 1;
+                report
+                    .first_anomaly_sample_index
+                    .get_or_insert(sample_index);
             }
-            if matches!(verdict.trust_level, TrustLevel::Rejected) {
+            if is_rejected {
                 report.rejected_false_positives += 1;
+                report
+                    .first_rejected_sample_index
+                    .get_or_insert(sample_index);
             }
         }
     }
@@ -430,19 +510,11 @@ pub fn write_spoofed_monitor_dataset_reader_writer<R: Read, W: Write>(
     let mut csv_writer = csv::Writer::from_writer(writer);
 
     for row in csv_reader.deserialize::<MonitorDatasetRow>() {
-        let mut row = row.map_err(MonitorDatasetError::Csv)?;
-        let scale = spoof_scale(row.timestamp_s, config);
-        if scale > 0.0 {
-            row.gps_px_ned_m += config.position_offset_ned_m.x * scale;
-            row.gps_py_ned_m += config.position_offset_ned_m.y * scale;
-            row.gps_pz_ned_m += config.position_offset_ned_m.z * scale;
-            row.gps_vx_ned_mps += config.velocity_offset_ned_mps.x * scale;
-            row.gps_vy_ned_mps += config.velocity_offset_ned_mps.y * scale;
-            row.gps_vz_ned_mps += config.velocity_offset_ned_mps.z * scale;
-            row.label_spoofed = true;
-        } else {
-            row.label_spoofed = false;
-        }
+        let row = row.map_err(MonitorDatasetError::Csv)?;
+        let row = spoof_monitor_dataset_rows(&[row], config)
+            .into_iter()
+            .next()
+            .expect("single-row spoof transform must return one row");
 
         csv_writer
             .serialize(row)

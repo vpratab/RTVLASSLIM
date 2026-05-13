@@ -17,6 +17,7 @@ cargo check --examples
 cargo run --example gps_spoof
 cargo run --example run_validation
 cargo run --example run_texbat_harness
+cargo run --example run_adversarial_sweep -- artifacts/px4_monitor_dataset.csv --dataset-label px4_capture --output-dir artifacts/sweeps
 ```
 
 ## WSL PX4 Paths
@@ -27,6 +28,7 @@ These paths assume PX4 SIH has already been built inside the ignored local `exte
 bash scripts/wsl_inline_sniff.sh --connection udpout:127.0.0.1:18570 --event-limit 500 --gps-limit 1 --suppress-imu
 bash scripts/wsl_inline_live.sh
 bash scripts/wsl_px4_benchmark.sh 60
+bash scripts/wsl_px4_multi_mission_benchmark.sh 120
 bash scripts/wsl_px4_live_spoof.sh
 ```
 

@@ -27,6 +27,12 @@ Runs the orchestrator live against PX4 SIH in WSL2 without spoof injection.
 
 Captures synchronized PX4 monitor samples, replays them nominally, then replays a software-injected spoof profile.
 
+## WSL PX4 Multi-Mission Matrix
+
+- `wsl_px4_multi_mission_benchmark.sh`
+
+Captures mission-specific PX4 SIH datasets (`hover`, `forward`, `turn`, `climb`), runs the standard replay benchmark on each, and emits structured adversarial sweep JSON / CSV reports for each mission.
+
 ## WSL PX4 Live Spoof Path
 
 - `wsl_px4_live_spoof.sh`
