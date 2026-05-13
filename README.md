@@ -54,7 +54,8 @@ The table below is the shortest honest summary of what has actually been run.
 | --- | --- | --- | --- |
 | PX4 SIH replay, nominal | 60 captured synchronized samples | anomaly FPR `0.000`, rejected FPR `0.000` | clean behavior on one narrow simulator capture |
 | PX4 SIH replay, injected spoof | same capture with software-injected GPS offset | anomaly TPR `1.000`, rejected TPR `1.000` | full rejection on one replayed spoof profile |
-| PX4 SIH live MAVLink spoof proxy | live PX4 SIH stream, spoof onset at `1.5 s` | `13/0/17` trusted/flagged/rejected | verdicts stayed trusted before spoof onset and then flipped to sustained rejection |
+| PX4 SIH live MAVLink spoof proxy, abrupt offset | live PX4 SIH stream, spoof onset at `1.5 s` inside the proxy after a `1 s` startup delay | `13/0/17` trusted/flagged/rejected | the measured run rejected on the first spoofed GPS packet; verdicts `#1` through `#14` were clean pre-spoof packets |
+| PX4 SIH live MAVLink spoof proxy, gradual carry-off | live PX4 SIH stream, `30 m` north ramp over `2.5 s` after the same onset timing | `25/4/1` trusted/flagged/rejected | the measured run stayed clean before spoof onset, then accumulated toward rejection and crossed into `Rejected` at verdict `#30` |
 | TEXBAT `ds2` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.978/0.034` | strong result with lower clean false positives than the earlier fixed-noise proxy |
 | TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.953/0.032` | improved gradual-drift sensitivity after calibrating horizontal residual CUSUM from the clean segment |
 | TEXBAT `ds7` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.999/0.000` | near-complete detection on this processed-dataset scenario after the same calibration |
@@ -84,14 +85,16 @@ Observed on `2026-05-12` using `scripts/wsl_px4_live_spoof.sh`:
 
 | Configuration | Value |
 | --- | --- |
-| spoof onset | `1.5 s` |
+| proxy startup delay before spoof begins | `1.0 s` |
+| proxy spoof onset after proxy start | `1.5 s` |
 | injected position offset | `+90 m north, -50 m east, +8 m down` |
 | injected velocity offset | `+10, -5, +1 m/s` in NED |
 | total packets processed | `339` |
 | IMU packets | `309` |
 | GPS packets | `30` |
 | verdicts | `13 trusted / 0 flagged / 17 rejected` |
-| first rejection | verdict `#14` |
+| first spoofed GPS packet in the measured run | verdict `#15` |
+| first rejection | verdict `#15` |
 | evidence output | `artifacts/wsl_px4_live_spoof_evidence.bin` |
 | observed evidence size | `6090 bytes` |
 
@@ -100,7 +103,25 @@ Method notes:
 - PX4 SIH ran locally inside WSL2
 - `examples/px4_spoof_proxy.rs` acted as a MAVLink man-in-the-middle
 - only `GLOBAL_POSITION_INT` was modified
+- the earlier "first rejection at verdict `#14` / `1.5 s` lag" wording was misleading because verdict numbering started before the proxy began spoofing
 - this is a live software-level MAVLink spoof path, not an RF-level spoof or receiver compromise
+
+Observed on `2026-05-13` using `scripts/wsl_px4_gradual_spoof.sh`:
+
+| Configuration | Value |
+| --- | --- |
+| proxy startup delay before spoof begins | `1.0 s` |
+| proxy spoof onset after proxy start | `1.5 s` |
+| injected position offset | north ramp from `0 m` to `30 m` over `2.5 s` |
+| injected velocity offset | `0 m/s` |
+| total packets processed | `328` |
+| IMU packets | `298` |
+| GPS packets | `30` |
+| verdicts | `25 trusted / 4 flagged / 1 rejected` |
+| first clearly spoof-affected GPS packet in the measured run | verdict `#16` |
+| first flagged verdict | verdict `#26` |
+| first rejection | verdict `#30` |
+| evidence output | `artifacts/wsl_px4_gradual_spoof_evidence.bin` |
 
 ### Processed TEXBAT Replay
 
@@ -128,7 +149,8 @@ Method notes:
 The current evidence supports these narrower statements:
 
 - the monitor path works end to end on live PX4 SIH telemetry
-- the current residual checks can reject at least one live software-injected MAVLink spoof profile after onset
+- the current residual checks rejected the measured abrupt live MAVLink spoof on the first spoofed GPS packet
+- the current gradual carry-off live profile stayed clean before spoof onset, then reached rejection within `15` verdicts of spoof onset without introducing false positives on the nominal replay benchmark
 - the current processed-TEXBAT harness performs strongly on `ds2`, reduces clean false positives on `ds3`, and remains partial on `ds7`
 - the new TEXBAT ablation runs show that the clock-bias path and persistence logic are carrying most of the detection burden on `ds3`
 
@@ -203,6 +225,7 @@ bash scripts/wsl_inline_sniff.sh --connection udpout:127.0.0.1:18570 --event-lim
 bash scripts/wsl_inline_live.sh
 bash scripts/wsl_px4_benchmark.sh 60
 bash scripts/wsl_px4_live_spoof.sh
+bash scripts/wsl_px4_gradual_spoof.sh
 ```
 
 Processed TEXBAT path used locally:

@@ -41,6 +41,10 @@ fn run() -> Result<(), String> {
         .map(|value| value.parse::<f64>().map_err(|error| error.to_string()))
         .transpose()?
         .unwrap_or(1.5);
+    let ramp_duration_s = argument_value("--position-ramp-duration-s")
+        .map(|value| value.parse::<f64>().map_err(|error| error.to_string()))
+        .transpose()?
+        .unwrap_or(0.0);
     let spoof_config = SpoofConfig {
         position_offset_ned_m: Vector3::new(
             parse_f64_argument("--north-offset-m", 90.0)?,
@@ -57,7 +61,7 @@ fn run() -> Result<(), String> {
     eprintln!("proxy upstream: {upstream}");
     eprintln!("proxy downstream: {downstream}");
     eprintln!(
-        "spoof onset: {spoof_onset_s:.2}s, position offset NED=({:.1}, {:.1}, {:.1}) m, velocity offset NED=({:.1}, {:.1}, {:.1}) m/s",
+        "spoof onset: {spoof_onset_s:.2}s, ramp duration: {ramp_duration_s:.2}s, position offset NED=({:.1}, {:.1}, {:.1}) m, velocity offset NED=({:.1}, {:.1}, {:.1}) m/s",
         spoof_config.position_offset_ned_m.x,
         spoof_config.position_offset_ned_m.y,
         spoof_config.position_offset_ned_m.z,
@@ -87,6 +91,7 @@ fn run() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         let elapsed_s = started_at.elapsed().as_secs_f64();
         let spoof_enabled = elapsed_s >= spoof_onset_s;
+        let spoof_scale = spoof_scale(elapsed_s, spoof_onset_s, ramp_duration_s);
 
         let outbound_message = match message {
             MavMessage::GLOBAL_POSITION_INT(data) => {
@@ -97,7 +102,11 @@ fn run() -> Result<(), String> {
                         spoof_announced = true;
                     }
                     spoofed_gps_frames += 1;
-                    MavMessage::GLOBAL_POSITION_INT(spoof_global_position(data, spoof_config)?)
+                    MavMessage::GLOBAL_POSITION_INT(spoof_global_position(
+                        data,
+                        spoof_config,
+                        spoof_scale,
+                    )?)
                 } else {
                     MavMessage::GLOBAL_POSITION_INT(data)
                 };
@@ -173,6 +182,7 @@ fn request_streams(connection: &mavlink::Connection<MavMessage>) -> Result<(), S
 fn spoof_global_position(
     mut data: GLOBAL_POSITION_INT_DATA,
     spoof_config: SpoofConfig,
+    spoof_scale: f64,
 ) -> Result<GLOBAL_POSITION_INT_DATA, String> {
     let geodetic_position = GeodeticPosition::new(
         scaled_degrees_e7_to_radians(data.lat).map_err(|error| format!("{error:?}"))?,
@@ -180,8 +190,10 @@ fn spoof_global_position(
         f64::from(data.alt) / MILLIMETRES_PER_METRE,
     )
     .map_err(|error| format!("{error:?}"))?;
+    let scaled_position_offset_ned_m = spoof_config.position_offset_ned_m * spoof_scale;
+    let scaled_velocity_offset_ned_mps = spoof_config.velocity_offset_ned_mps * spoof_scale as f32;
     let spoofed_geodetic_position =
-        offset_geodetic_position_ned(geodetic_position, spoof_config.position_offset_ned_m)
+        offset_geodetic_position_ned(geodetic_position, scaled_position_offset_ned_m)
             .map_err(|error| format!("{error:?}"))?;
 
     data.lat = radians_to_scaled_degrees_e7(spoofed_geodetic_position.latitude_rad)?;
@@ -189,22 +201,33 @@ fn spoof_global_position(
     data.alt = metres_to_millimetres_i32(spoofed_geodetic_position.altitude_m)?;
     data.relative_alt = saturating_add_i32(
         data.relative_alt,
-        metres_to_millimetres_i32(-spoof_config.position_offset_ned_m.z)?,
+        metres_to_millimetres_i32(-scaled_position_offset_ned_m.z)?,
     );
     data.vx = saturating_add_i16(
         data.vx,
-        metres_per_second_to_centimetres_per_second_i16(spoof_config.velocity_offset_ned_mps.x)?,
+        metres_per_second_to_centimetres_per_second_i16(scaled_velocity_offset_ned_mps.x)?,
     );
     data.vy = saturating_add_i16(
         data.vy,
-        metres_per_second_to_centimetres_per_second_i16(spoof_config.velocity_offset_ned_mps.y)?,
+        metres_per_second_to_centimetres_per_second_i16(scaled_velocity_offset_ned_mps.y)?,
     );
     data.vz = saturating_add_i16(
         data.vz,
-        metres_per_second_to_centimetres_per_second_i16(spoof_config.velocity_offset_ned_mps.z)?,
+        metres_per_second_to_centimetres_per_second_i16(scaled_velocity_offset_ned_mps.z)?,
     );
 
     Ok(data)
+}
+
+fn spoof_scale(elapsed_s: f64, spoof_onset_s: f64, ramp_duration_s: f64) -> f64 {
+    if elapsed_s < spoof_onset_s {
+        return 0.0;
+    }
+    if ramp_duration_s <= 0.0 {
+        return 1.0;
+    }
+
+    ((elapsed_s - spoof_onset_s) / ramp_duration_s).clamp(0.0, 1.0)
 }
 
 fn argument_value(flag: &str) -> Option<String> {
