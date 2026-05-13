@@ -7,7 +7,10 @@ use rtvlas::{
     ekf_core::state::{EskfState, ImuNoiseModel, NominalState, PredictConfig, StateCovariance},
     orchestrator::{FileSink, Orchestrator},
     statistical_monitor::{
-        monitor::{EwmaRiskAccumulator, ImmediateTriggerConfig, StatisticalMonitor},
+        monitor::{
+            EwmaRiskAccumulator, HorizontalResidualPersistenceConfig, ImmediateTriggerConfig,
+            StatisticalMonitor,
+        },
         observation::ChiSquareThresholdConfig,
     },
     telemetry_adapter::MavlinkSubscriber,
@@ -38,6 +41,9 @@ fn run() -> Result<(), String> {
     let immediate_gps_reject_threshold = optional_f32_argument("--immediate-gps-reject")?;
     let immediate_position_flag_threshold = optional_f32_argument("--immediate-position-flag")?;
     let immediate_position_reject_threshold = optional_f32_argument("--immediate-position-reject")?;
+    let disable_horizontal_persistence = flag_present("--disable-horizontal-persistence");
+    let horizontal_persistence_slack = optional_f32_argument("--horizontal-persistence-slack")?;
+    let horizontal_persistence_reject = optional_f32_argument("--horizontal-persistence-reject")?;
 
     if let Some(parent_directory) = evidence_path.parent() {
         std::fs::create_dir_all(parent_directory).map_err(|error| error.to_string())?;
@@ -75,6 +81,9 @@ fn run() -> Result<(), String> {
             immediate_gps_reject_threshold,
             immediate_position_flag_threshold,
             immediate_position_reject_threshold,
+            disable_horizontal_persistence,
+            horizontal_persistence_slack,
+            horizontal_persistence_reject,
         ),
         attestation_provider,
         evidence_sink,
@@ -174,18 +183,29 @@ fn monitor(
     immediate_gps_reject_threshold: Option<f32>,
     immediate_position_flag_threshold: Option<f32>,
     immediate_position_reject_threshold: Option<f32>,
+    disable_horizontal_persistence: bool,
+    horizontal_persistence_slack: Option<f32>,
+    horizontal_persistence_reject: Option<f32>,
 ) -> StatisticalMonitor {
-    let monitor = StatisticalMonitor::new(
+    let mut monitor = StatisticalMonitor::new(
         ChiSquareThresholdConfig::new(12.592, 22.458),
         EwmaRiskAccumulator::new(0.6),
     );
+
+    if !disable_horizontal_persistence {
+        monitor =
+            monitor.with_horizontal_residual_persistence(HorizontalResidualPersistenceConfig::new(
+                horizontal_persistence_slack.unwrap_or(0.2),
+                horizontal_persistence_reject.unwrap_or(65.0),
+            ));
+    }
 
     if immediate_gps_flag_threshold.is_some()
         || immediate_gps_reject_threshold.is_some()
         || immediate_position_flag_threshold.is_some()
         || immediate_position_reject_threshold.is_some()
     {
-        monitor.with_immediate_triggers(
+        monitor = monitor.with_immediate_triggers(
             ImmediateTriggerConfig::gps_only(
                 immediate_gps_flag_threshold,
                 immediate_gps_reject_threshold,
@@ -194,10 +214,10 @@ fn monitor(
                 immediate_position_flag_threshold,
                 immediate_position_reject_threshold,
             ),
-        )
-    } else {
-        monitor
+        );
     }
+
+    monitor
 }
 
 fn argument_value(flag: &str) -> Option<String> {

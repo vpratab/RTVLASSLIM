@@ -696,6 +696,7 @@ mod tests {
             heading_squared_mahalanobis_distance: None,
             clock_bias_squared_mahalanobis_distance: None,
             clock_bias_persistent_score: None,
+            horizontal_residual_persistent_score: None,
             accumulated_risk: 0.5,
             innovation: crate::statistical_monitor::observation::ObservationVector::zeros(),
             barometer_residual_m: None,

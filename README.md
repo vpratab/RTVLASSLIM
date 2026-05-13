@@ -43,7 +43,7 @@ The repository is in the "prototype with measured simulator and processed-data r
 
 - The Rust crate builds cleanly.
 - The core crate still checks with `--no-default-features`.
-- The library test suite currently passes `26/26`.
+- The library test suite currently passes `28/28`.
 - PX4 SIH paths, a live MAVLink spoof proxy, and a processed TEXBAT harness have been exercised locally.
 
 ## Benchmark Snapshot
@@ -56,7 +56,7 @@ The table below is the shortest honest summary of what has actually been run.
 | PX4 SIH replay, injected spoof | same capture with software-injected GPS offset | anomaly TPR `1.000`, rejected TPR `1.000` | full rejection on one replayed spoof profile |
 | PX4 SIH live MAVLink spoof proxy | live PX4 SIH stream, spoof onset at `1.5 s` | `13/0/17` trusted/flagged/rejected | verdicts stayed trusted before spoof onset and then flipped to sustained rejection |
 | TEXBAT `ds2` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.978/0.034` | strong result with lower clean false positives than the earlier fixed-noise proxy |
-| TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.749/0.032` | lower clean false positives, with reduced sensitivity, on the hardest processed scenario here |
+| TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.907/0.032` | improved gradual-drift sensitivity after adding horizontal residual persistence |
 | TEXBAT `ds7` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.705/0.000` | partial detection on a harder processed-dataset scenario |
 
 These are narrow results. They should not be generalized beyond the exact simulator and processed-data paths described in this repository.
@@ -80,15 +80,15 @@ Method notes:
 
 ### PX4 SIH Live MAVLink Spoof Proxy
 
-Observed on `2026-05-11` using `scripts/wsl_px4_live_spoof.sh`:
+Observed on `2026-05-12` using `scripts/wsl_px4_live_spoof.sh`:
 
 | Configuration | Value |
 | --- | --- |
 | spoof onset | `1.5 s` |
 | injected position offset | `+90 m north, -50 m east, +8 m down` |
 | injected velocity offset | `+10, -5, +1 m/s` in NED |
-| total packets processed | `340` |
-| IMU packets | `310` |
+| total packets processed | `339` |
+| IMU packets | `309` |
 | GPS packets | `30` |
 | verdicts | `13 trusted / 0 flagged / 17 rejected` |
 | first rejection | verdict `#14` |
@@ -104,14 +104,14 @@ Method notes:
 
 ### Processed TEXBAT Replay
 
-Observed on `2026-05-11` using `cargo run --example run_texbat_harness` after downloading processed TEXBAT artifacts:
+Observed on `2026-05-12` using `cargo run --example run_texbat_harness` after downloading processed TEXBAT artifacts:
 
 | Scenario | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `176.50 us` | `183.10 us` | `295.10 us` |
-| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `178.35 us` | `188.50 us` | `286.80 us` |
-| `ds3` | `956 / 4 / 1136` | `0.749` | `0.032` | `0.749` | `0.025` | `182.10 us` | `222.30 us` | `622.00 us` |
-| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `177.97 us` | `186.00 us` | `422.90 us` |
+| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `182.46 us` | `212.40 us` | `291.00 us` |
+| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `184.64 us` | `264.20 us` | `367.30 us` |
+| `ds3` | `719 / 4 / 1373` | `0.907` | `0.032` | `0.907` | `0.025` | `191.02 us` | `273.80 us` | `292.20 us` |
+| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `189.31 us` | `260.40 us` | `386.00 us` |
 
 Method notes:
 
@@ -119,7 +119,8 @@ Method notes:
 - the harness uses the clean navigation solution as a reference trajectory proxy
 - there is no paired IMU stream from TEXBAT in this repository
 - the current harness now calibrates replay noise from the pre-spoof clean segment, including per-axis position spread and clock-bias spread
-- `ds3` now has materially lower pre-spoof false positives than the earlier fixed-noise proxy, but that reduction comes with lower spoof sensitivity than the earlier over-tight setting
+- `ds3` was originally weak because the processed attack looked more like a sustained moderate horizontal drift than a large one-shot jump
+- the current full profile adds horizontal residual persistence on top of the older clock-bias persistence, which raises `ds3` anomaly TPR from `0.749` to `0.907` at the same measured anomaly FPR of `0.032`
 
 ## Interpretation
 
@@ -145,21 +146,21 @@ The repository now includes a direct ablation runner:
 cargo run --example run_texbat_ablation
 ```
 
-Observed on `2026-05-11`:
+Observed on `2026-05-12`:
 
 | Scenario | Profile | Anomaly TPR | Anomaly FPR | What it shows |
 | --- | --- | ---: | ---: | --- |
 | `ds2` | `full` | `0.978` | `0.034` | current full monitor operating point |
 | `ds2` | `single_epoch_gps_clock` | `0.979` | `0.033` | persistence matters less on this easier processed case |
 | `ds2` | `single_epoch_gps_only` | `0.000` | `0.016` | GPS-only residuals do not carry the detection here |
-| `ds3` | `full` | `0.749` | `0.032` | current best processed result on the hardest case here |
-| `ds3` | `no_persistence` | `0.000` | `0.032` | removing clock-bias persistence collapses detection on `ds3` |
+| `ds3` | `full` | `0.907` | `0.032` | current best processed result on the hardest case here |
+| `ds3` | `no_persistence` | `0.000` | `0.032` | removing persistence collapses detection on `ds3` |
 | `ds3` | `single_epoch_gps_clock` | `0.000` | `0.030` | single-epoch clock checks alone are also insufficient on `ds3` |
 | `ds7` | `full` | `0.705` | `0.000` | current partial-detection result |
 | `ds7` | `no_persistence` | `0.662` | `0.000` | persistence helps, but less dramatically than on `ds3` |
 | `ds7` | `single_epoch_gps_only` | `0.000` | `0.000` | the GPS-only baseline again fails completely here |
 
-This does not prove the architecture is globally optimal, but it does answer one basic question: the clock-bias path and its persistence logic are materially responsible for the harder processed-replay detections.
+This does not prove the architecture is globally optimal, but it does answer one basic question: the harder processed-replay detections are coming from sequential logic, not from plain one-shot GPS residual thresholds. On `ds3`, single-epoch checks still fail completely, while the full persistence path reaches `0.907` anomaly TPR.
 
 ## Evidence Verification
 

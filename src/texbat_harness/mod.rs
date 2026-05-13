@@ -16,8 +16,8 @@ use crate::{
     ekf_core::state::{ATT_IDX, EskfState, NominalState, StateCovariance},
     statistical_monitor::{
         monitor::{
-            ClockBiasPersistenceConfig, EwmaRiskAccumulator, ImmediateTriggerConfig, MonitorError,
-            StatisticalMonitor,
+            ClockBiasPersistenceConfig, EwmaRiskAccumulator, HorizontalResidualPersistenceConfig,
+            ImmediateTriggerConfig, MonitorError, StatisticalMonitor,
         },
         observation::{ChiSquareThresholdConfig, ClockBiasObservation, GpsObservation, TrustLevel},
     },
@@ -127,6 +127,7 @@ pub struct TexbatMonitorProfile {
     pub ewma_alpha: f32,
     pub use_clock_bias_observation: bool,
     pub clock_bias_persistence: Option<ClockBiasPersistenceConfig>,
+    pub horizontal_residual_persistence: Option<HorizontalResidualPersistenceConfig>,
     pub immediate_triggers: Option<ImmediateTriggerConfig>,
 }
 
@@ -137,6 +138,9 @@ impl TexbatMonitorProfile {
             ewma_alpha,
             use_clock_bias_observation: true,
             clock_bias_persistence: Some(ClockBiasPersistenceConfig::new(0.9, 92.0)),
+            horizontal_residual_persistence: Some(HorizontalResidualPersistenceConfig::new(
+                0.2, 65.0,
+            )),
             immediate_triggers: None,
         }
     }
@@ -435,6 +439,9 @@ fn evaluate_aligned_samples(
         StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(profile.ewma_alpha));
     if let Some(clock_bias_persistence) = profile.clock_bias_persistence {
         monitor = monitor.with_clock_bias_persistence(clock_bias_persistence);
+    }
+    if let Some(horizontal_residual_persistence) = profile.horizontal_residual_persistence {
+        monitor = monitor.with_horizontal_residual_persistence(horizontal_residual_persistence);
     }
     if let Some(immediate_triggers) = profile.immediate_triggers {
         monitor = monitor.with_immediate_triggers(immediate_triggers);

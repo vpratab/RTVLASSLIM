@@ -1,5 +1,6 @@
 use core::fmt;
 
+use libm::sqrtf;
 use nalgebra::linalg::Cholesky;
 
 use crate::ekf_core::state::EskfState;
@@ -46,6 +47,21 @@ pub struct ClockBiasPersistenceConfig {
 }
 
 impl ClockBiasPersistenceConfig {
+    pub const fn new(slack_sigma: f32, rejection_score_threshold: f32) -> Self {
+        Self {
+            slack_sigma,
+            rejection_score_threshold,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HorizontalResidualPersistenceConfig {
+    pub slack_sigma: f32,
+    pub rejection_score_threshold: f32,
+}
+
+impl HorizontalResidualPersistenceConfig {
     pub const fn new(slack_sigma: f32, rejection_score_threshold: f32) -> Self {
         Self {
             slack_sigma,
@@ -126,10 +142,29 @@ impl ClockBiasPersistenceState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+struct HorizontalResidualPersistenceState {
+    config: HorizontalResidualPersistenceConfig,
+    score: f32,
+}
+
+impl HorizontalResidualPersistenceState {
+    const fn new(config: HorizontalResidualPersistenceConfig) -> Self {
+        Self { config, score: 0.0 }
+    }
+
+    fn update(&mut self, normalized_horizontal_residual: f32) -> f32 {
+        self.score =
+            (self.score + normalized_horizontal_residual - self.config.slack_sigma).max(0.0);
+        self.score
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StatisticalMonitor {
     thresholds: ChiSquareThresholdConfig,
     risk_accumulator: EwmaRiskAccumulator,
     clock_bias_persistence: Option<ClockBiasPersistenceState>,
+    horizontal_residual_persistence: Option<HorizontalResidualPersistenceState>,
     immediate_triggers: Option<ImmediateTriggerConfig>,
 }
 
@@ -142,12 +177,22 @@ impl StatisticalMonitor {
             thresholds,
             risk_accumulator,
             clock_bias_persistence: None,
+            horizontal_residual_persistence: None,
             immediate_triggers: None,
         }
     }
 
     pub fn with_clock_bias_persistence(mut self, config: ClockBiasPersistenceConfig) -> Self {
         self.clock_bias_persistence = Some(ClockBiasPersistenceState::new(config));
+        self
+    }
+
+    pub fn with_horizontal_residual_persistence(
+        mut self,
+        config: HorizontalResidualPersistenceConfig,
+    ) -> Self {
+        self.horizontal_residual_persistence =
+            Some(HorizontalResidualPersistenceState::new(config));
         self
     }
 
@@ -307,6 +352,21 @@ impl StatisticalMonitor {
             ),
             None => (false, false),
         };
+        let horizontal_residual_persistent_score = match &mut self.horizontal_residual_persistence {
+            Some(persistence_state) => {
+                let horizontal_residual_norm_m = innovation.fixed_rows::<2>(0).norm();
+                let innovation_position_covariance =
+                    innovation_covariance.fixed_view::<2, 2>(0, 0).into_owned();
+                let horizontal_position_variance_m2 =
+                    innovation_position_covariance.diagonal().amax();
+                let horizontal_position_std_m = sqrtf(horizontal_position_variance_m2).max(1.0e-6);
+                Some(
+                    persistence_state
+                        .update(horizontal_residual_norm_m / horizontal_position_std_m),
+                )
+            }
+            None => None,
+        };
         let persistent_clock_reject =
             match (self.clock_bias_persistence, clock_bias_persistent_score) {
                 (Some(persistence_state), Some(score)) => {
@@ -314,10 +374,19 @@ impl StatisticalMonitor {
                 }
                 _ => false,
             };
+        let persistent_horizontal_reject = match (
+            self.horizontal_residual_persistence,
+            horizontal_residual_persistent_score,
+        ) {
+            (Some(persistence_state), Some(score)) => {
+                score >= persistence_state.config.rejection_score_threshold
+            }
+            _ => false,
+        };
         let trust_level = classify_trust_level(
             accumulated_risk,
             self.thresholds,
-            persistent_clock_reject,
+            persistent_clock_reject || persistent_horizontal_reject,
             immediate_flag_triggered,
             immediate_reject_triggered,
         );
@@ -329,6 +398,7 @@ impl StatisticalMonitor {
             heading_squared_mahalanobis_distance,
             clock_bias_squared_mahalanobis_distance,
             clock_bias_persistent_score,
+            horizontal_residual_persistent_score,
             accumulated_risk,
             innovation,
             barometer_residual_m,
@@ -528,7 +598,8 @@ mod tests {
     use nalgebra::{UnitQuaternion, Vector3};
 
     use super::{
-        ClockBiasPersistenceConfig, EwmaRiskAccumulator, ImmediateTriggerConfig, StatisticalMonitor,
+        ClockBiasPersistenceConfig, EwmaRiskAccumulator, HorizontalResidualPersistenceConfig,
+        ImmediateTriggerConfig, StatisticalMonitor,
     };
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
@@ -701,6 +772,44 @@ mod tests {
         }
 
         assert_eq!(last_trust_level, TrustLevel::Rejected);
+    }
+
+    #[test]
+    fn persistent_horizontal_residual_rejects_sustained_moderate_drift() {
+        let nominal = NominalState {
+            timestamp_s: 40.0,
+            position_ned_m: Vector3::zeros(),
+            velocity_ned_mps: Vector3::zeros(),
+            attitude_body_to_ned: UnitQuaternion::identity(),
+            accel_bias_mps2: Vector3::zeros(),
+            gyro_bias_rps: Vector3::zeros(),
+            geodetic_reference: None,
+        };
+        let predicted_state = EskfState::new(nominal, StateCovariance::identity() * 1.0e-3);
+        let gps_observation = GpsObservation::from_accuracy_metrics(
+            40.0,
+            Vector3::new(7.0, -4.0, 0.2),
+            Vector3::zeros(),
+            5.0,
+            6.0,
+            1.0,
+            1.5,
+        );
+        let thresholds = ChiSquareThresholdConfig::new(12.592, 22.458);
+        let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(0.6))
+            .with_horizontal_residual_persistence(HorizontalResidualPersistenceConfig::new(
+                0.2, 8.0,
+            ));
+
+        let mut last_verdict = TrustLevel::Trusted;
+        for _ in 0..6 {
+            let verdict = monitor
+                .evaluate_gps_observation(&predicted_state, &gps_observation)
+                .unwrap();
+            last_verdict = verdict.trust_level;
+        }
+
+        assert_eq!(last_verdict, TrustLevel::Rejected);
     }
 
     #[test]

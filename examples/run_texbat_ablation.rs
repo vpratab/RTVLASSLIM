@@ -2,7 +2,9 @@ use std::{path::PathBuf, process::ExitCode};
 
 use rtvlas::{
     statistical_monitor::{
-        monitor::{ClockBiasPersistenceConfig, ImmediateTriggerConfig},
+        monitor::{
+            ClockBiasPersistenceConfig, HorizontalResidualPersistenceConfig, ImmediateTriggerConfig,
+        },
         observation::ChiSquareThresholdConfig,
     },
     texbat_harness::{
@@ -87,6 +89,9 @@ fn run() -> Result<(), String> {
             ewma_alpha: 0.6,
             use_clock_bias_observation: true,
             clock_bias_persistence: Some(ClockBiasPersistenceConfig::new(0.9, 92.0)),
+            horizontal_residual_persistence: Some(HorizontalResidualPersistenceConfig::new(
+                0.2, 65.0,
+            )),
             immediate_triggers: Some(ImmediateTriggerConfig::gps_only(Some(64.0), Some(196.0))),
         },
         TexbatMonitorProfile {
@@ -94,6 +99,7 @@ fn run() -> Result<(), String> {
             ewma_alpha: 0.6,
             use_clock_bias_observation: true,
             clock_bias_persistence: None,
+            horizontal_residual_persistence: None,
             immediate_triggers: None,
         },
         TexbatMonitorProfile {
@@ -101,6 +107,7 @@ fn run() -> Result<(), String> {
             ewma_alpha: 1.0,
             use_clock_bias_observation: true,
             clock_bias_persistence: None,
+            horizontal_residual_persistence: None,
             immediate_triggers: None,
         },
         TexbatMonitorProfile {
@@ -108,6 +115,7 @@ fn run() -> Result<(), String> {
             ewma_alpha: 1.0,
             use_clock_bias_observation: false,
             clock_bias_persistence: None,
+            horizontal_residual_persistence: None,
             immediate_triggers: None,
         },
     ];

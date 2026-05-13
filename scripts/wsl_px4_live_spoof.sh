@@ -9,6 +9,9 @@ immediate_gps_flag="${RTVLAS_IMMEDIATE_GPS_FLAG:-}"
 immediate_gps_reject="${RTVLAS_IMMEDIATE_GPS_REJECT:-}"
 immediate_position_flag="${RTVLAS_IMMEDIATE_POSITION_FLAG:-}"
 immediate_position_reject="${RTVLAS_IMMEDIATE_POSITION_REJECT:-}"
+horizontal_persistence_slack="${RTVLAS_HORIZONTAL_PERSISTENCE_SLACK:-}"
+horizontal_persistence_reject="${RTVLAS_HORIZONTAL_PERSISTENCE_REJECT:-}"
+disable_horizontal_persistence="${RTVLAS_DISABLE_HORIZONTAL_PERSISTENCE:-}"
 
 cleanup() {
   if [ -n "${livepid:-}" ]; then
@@ -64,6 +67,15 @@ if [ -n "$immediate_position_flag" ]; then
 fi
 if [ -n "$immediate_position_reject" ]; then
   live_args+=(--immediate-position-reject "$immediate_position_reject")
+fi
+if [ -n "$horizontal_persistence_slack" ]; then
+  live_args+=(--horizontal-persistence-slack "$horizontal_persistence_slack")
+fi
+if [ -n "$horizontal_persistence_reject" ]; then
+  live_args+=(--horizontal-persistence-reject "$horizontal_persistence_reject")
+fi
+if [ -n "$disable_horizontal_persistence" ]; then
+  live_args+=(--disable-horizontal-persistence)
 fi
 
 timeout 25s target/debug/examples/px4_sitl_live \
