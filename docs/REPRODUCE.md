@@ -31,6 +31,8 @@ Successful current result:
 test result: ok. 32 passed; 0 failed
 ```
 
+These checks prove the crate builds and the library tests pass on the local development host. They do not measure CPU load, memory use, or scheduling behavior on representative flight hardware.
+
 ## TEXBAT Processed Replay
 
 Download processed TEXBAT artifacts:
@@ -208,3 +210,4 @@ A failed run usually shows:
 - [BASELINES.md](BASELINES.md)
 - [THREAT_MODEL.md](THREAT_MODEL.md)
 - [FORENSICS.md](FORENSICS.md)
+- [PRE_PHASE1_ASSESSMENT.md](PRE_PHASE1_ASSESSMENT.md)

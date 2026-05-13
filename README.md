@@ -6,6 +6,18 @@ GPS spoofing matters because small autonomous aircraft often trust processed GPS
 
 > Current scope: this is a simulator and processed-dataset prototype. It is not field validated, not RF-layer detection, not a hardware-qualified flight system, and not a claim of generalized platform robustness.
 
+## Readiness Snapshot
+
+| Dimension | Current status |
+| --- | --- |
+| Best TRL description | TRL 3, with TRL 4-style evidence only for controlled replay and PX4 SIH paths |
+| Measured validation | processed TEXBAT replay, PX4 SIH replay, PX4 SIH software MAVLink spoof proxy |
+| Not measured | outdoor receiver logs, real flight, raw IF replay, RF spoofing, target flight hardware CPU/memory |
+| Primary technical risk | processed-navigation monitoring cannot see RF-layer attacks that remain internally consistent through the receiver |
+| Next evidence needed | target-hardware profiling and outdoor GNSS/IMU nominal data |
+
+See [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) for the risk table and recommended pre-Phase 1 work plan.
+
 ## Key Results
 
 ### Processed TEXBAT Replay
@@ -151,6 +163,7 @@ For a step-by-step reproduction guide, see [docs/REPRODUCE.md](docs/REPRODUCE.md
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | what the detector does and does not cover |
 | [docs/BASELINES.md](docs/BASELINES.md) | baseline and ablation tables |
 | [docs/REPRODUCE.md](docs/REPRODUCE.md) | full reproduction guide |
+| [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) | TRL, risks, and pre-Phase 1 work plan |
 | [docs/benchmark-summary.md](docs/benchmark-summary.md) | compact measured-result record |
 | [docs/verification.md](docs/verification.md) | additional verification notes |
 

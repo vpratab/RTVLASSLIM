@@ -231,3 +231,5 @@ The repository does **not** yet justify claims of:
 - generalized platform robustness
 - hardware-qualified latency
 - end-to-end RF spoof resilience
+
+For the pre-Phase 1 risk table and recommended next experiments, see [PRE_PHASE1_ASSESSMENT.md](PRE_PHASE1_ASSESSMENT.md).

@@ -11,7 +11,7 @@ This repository is intentionally split between a small Rust crate core and optio
 - `scripts/`
   - shell and PowerShell helpers for verified local workflows
 - `docs/`
-  - repository maps and verification notes
+  - algorithm, threat model, baseline, reproduction, readiness, and verification notes
 - `artifacts/`
   - ignored local outputs such as evidence bundles, benchmark logs, and capture files
 - `external/`
@@ -43,3 +43,18 @@ See [examples/README.md](../examples/README.md) for a categorized map of the exe
 ## Scripts
 
 See [scripts/README.md](../scripts/README.md) for the verified shell and PowerShell entry points.
+
+## Evaluation Documents
+
+- [ALGORITHM.md](ALGORITHM.md)
+  - detector math and ablation interpretation
+- [BASELINES.md](BASELINES.md)
+  - simple baselines and TEXBAT ablations
+- [FORENSICS.md](FORENSICS.md)
+  - signed evidence format and verification limits
+- [THREAT_MODEL.md](THREAT_MODEL.md)
+  - in-scope and out-of-scope attacks
+- [PRE_PHASE1_ASSESSMENT.md](PRE_PHASE1_ASSESSMENT.md)
+  - maturity, risks, and recommended next experiments
+- [REPRODUCE.md](REPRODUCE.md)
+  - commands needed to regenerate measured results

@@ -12,6 +12,8 @@ The monitored inputs are processed telemetry, primarily:
 - `GPS_RAW_INT`
 - `GLOBAL_POSITION_INT`
 
+In MAVLink, `GPS_RAW_INT` is still a processed receiver message. RTVLAS-Slim does not parse raw intermediate-frequency samples, correlator taps, carrier phase, or raw pseudorange measurements in the current implementation.
+
 The measured attack paths include:
 
 | Path | Attack model | Evidence |
@@ -41,6 +43,12 @@ Other out-of-scope attacks:
 The code is written around common MAVLink telemetry messages used by PX4 and ArduPilot-style systems. It is receiver-agnostic in the sense that it does not require a specific GPS receiver vendor or raw receiver access.
 
 The measured live and multi-mission results in this repository are PX4 SIH only. ArduPilot, hardware PX4, fixed-wing, VTOL, outdoor flight, and high-dynamics vehicle profiles are not measured in this repository.
+
+## Integration Boundary
+
+RTVLAS-Slim can be positioned as a receiver-agnostic software monitor because it does not require receiver firmware changes or raw RF access. That is also its limitation: if the receiver outputs a self-consistent but false navigation solution, RTVLAS-Slim only detects it when the solution diverges from inertial consistency, clock-bias consistency, or residual persistence bounds.
+
+It should be paired with receiver-level or RF-layer techniques when the adversary model includes sophisticated electronic warfare.
 
 ## Reviewer Conclusion
 
