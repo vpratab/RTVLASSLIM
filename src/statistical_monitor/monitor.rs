@@ -71,6 +71,53 @@ impl HorizontalResidualPersistenceConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VelocityResidualPersistenceConfig {
+    pub slack_sigma: f32,
+    pub rejection_score_threshold: f32,
+    pub normalization_std_floor_mps: f32,
+}
+
+impl VelocityResidualPersistenceConfig {
+    pub const fn new(
+        slack_sigma: f32,
+        rejection_score_threshold: f32,
+        normalization_std_floor_mps: f32,
+    ) -> Self {
+        Self {
+            slack_sigma,
+            rejection_score_threshold,
+            normalization_std_floor_mps,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RejectConfirmationConfig {
+    pub confirming_epochs_before_reject: u8,
+}
+
+impl RejectConfirmationConfig {
+    pub const fn new(confirming_epochs_before_reject: u8) -> Self {
+        Self {
+            confirming_epochs_before_reject,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PersistenceWarningConfig {
+    pub score_fraction_of_rejection: f32,
+}
+
+impl PersistenceWarningConfig {
+    pub const fn new(score_fraction_of_rejection: f32) -> Self {
+        Self {
+            score_fraction_of_rejection,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ImmediateTriggerConfig {
     pub gps_flag_squared_mahalanobis_threshold: Option<f32>,
     pub gps_reject_squared_mahalanobis_threshold: Option<f32>,
@@ -164,12 +211,73 @@ impl HorizontalResidualPersistenceState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+struct VelocityResidualPersistenceState {
+    config: VelocityResidualPersistenceConfig,
+    score: f32,
+}
+
+impl VelocityResidualPersistenceState {
+    const fn new(config: VelocityResidualPersistenceConfig) -> Self {
+        Self { config, score: 0.0 }
+    }
+
+    fn update(&mut self, normalized_velocity_residual: f32) -> f32 {
+        self.score = (self.score + normalized_velocity_residual - self.config.slack_sigma).max(0.0);
+        self.score
+    }
+
+    fn reset(&mut self) {
+        self.score = 0.0;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RejectConfirmationState {
+    config: RejectConfirmationConfig,
+    confirming_epochs: u8,
+}
+
+impl RejectConfirmationState {
+    const fn new(config: RejectConfirmationConfig) -> Self {
+        Self {
+            config,
+            confirming_epochs: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.confirming_epochs = 0;
+    }
+
+    fn classify(&mut self, raw_reject: bool, raw_flag: bool) -> TrustLevel {
+        if raw_reject {
+            if self.confirming_epochs < self.config.confirming_epochs_before_reject {
+                self.confirming_epochs = self.confirming_epochs.saturating_add(1);
+                return TrustLevel::Flagged;
+            }
+
+            return TrustLevel::Rejected;
+        }
+
+        self.reset();
+        if raw_flag {
+            TrustLevel::Flagged
+        } else {
+            TrustLevel::Trusted
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StatisticalMonitor {
     thresholds: ChiSquareThresholdConfig,
     risk_accumulator: EwmaRiskAccumulator,
     clock_bias_persistence: Option<ClockBiasPersistenceState>,
     horizontal_residual_persistence: Option<HorizontalResidualPersistenceState>,
+    velocity_residual_persistence: Option<VelocityResidualPersistenceState>,
     horizontal_residual_normalization_std_override_m: Option<f32>,
+    reject_confirmation: Option<RejectConfirmationState>,
+    persistence_warning: Option<PersistenceWarningConfig>,
     immediate_triggers: Option<ImmediateTriggerConfig>,
 }
 
@@ -183,7 +291,10 @@ impl StatisticalMonitor {
             risk_accumulator,
             clock_bias_persistence: None,
             horizontal_residual_persistence: None,
+            velocity_residual_persistence: None,
             horizontal_residual_normalization_std_override_m: None,
+            reject_confirmation: None,
+            persistence_warning: None,
             immediate_triggers: None,
         }
     }
@@ -199,6 +310,31 @@ impl StatisticalMonitor {
     ) -> Self {
         self.horizontal_residual_persistence =
             Some(HorizontalResidualPersistenceState::new(config));
+        self
+    }
+
+    pub fn with_velocity_residual_persistence(
+        mut self,
+        config: VelocityResidualPersistenceConfig,
+    ) -> Self {
+        self.velocity_residual_persistence = Some(VelocityResidualPersistenceState::new(config));
+        self
+    }
+
+    pub fn set_velocity_residual_persistence(
+        &mut self,
+        config: Option<VelocityResidualPersistenceConfig>,
+    ) {
+        self.velocity_residual_persistence = config.map(VelocityResidualPersistenceState::new);
+    }
+
+    pub fn with_reject_confirmation(mut self, config: RejectConfirmationConfig) -> Self {
+        self.reject_confirmation = Some(RejectConfirmationState::new(config));
+        self
+    }
+
+    pub fn with_persistence_warning(mut self, config: PersistenceWarningConfig) -> Self {
+        self.persistence_warning = Some(config);
         self
     }
 
@@ -237,6 +373,12 @@ impl StatisticalMonitor {
         }
         if let Some(horizontal_residual_persistence) = &mut self.horizontal_residual_persistence {
             horizontal_residual_persistence.reset();
+        }
+        if let Some(velocity_residual_persistence) = &mut self.velocity_residual_persistence {
+            velocity_residual_persistence.reset();
+        }
+        if let Some(reject_confirmation) = &mut self.reject_confirmation {
+            reject_confirmation.reset();
         }
     }
 
@@ -404,6 +546,24 @@ impl StatisticalMonitor {
             }
             None => None,
         };
+        let velocity_residual_persistent_score = match &mut self.velocity_residual_persistence {
+            Some(persistence_state) => {
+                let horizontal_velocity_residual_norm_mps = innovation.fixed_rows::<2>(3).norm();
+                let innovation_velocity_covariance =
+                    innovation_covariance.fixed_view::<2, 2>(3, 3).into_owned();
+                let horizontal_velocity_variance_m2ps2 =
+                    innovation_velocity_covariance.diagonal().amax();
+                let horizontal_velocity_std_mps = sqrtf(horizontal_velocity_variance_m2ps2)
+                    .max(persistence_state.config.normalization_std_floor_mps)
+                    .max(1.0e-6);
+                Some(
+                    persistence_state.update(
+                        horizontal_velocity_residual_norm_mps / horizontal_velocity_std_mps,
+                    ),
+                )
+            }
+            None => None,
+        };
         let persistent_clock_reject =
             match (self.clock_bias_persistence, clock_bias_persistent_score) {
                 (Some(persistence_state), Some(score)) => {
@@ -411,6 +571,12 @@ impl StatisticalMonitor {
                 }
                 _ => false,
             };
+        let persistent_clock_flag = persistence_warning_triggered(
+            self.persistence_warning,
+            self.clock_bias_persistence
+                .map(|state| state.config.rejection_score_threshold),
+            clock_bias_persistent_score,
+        );
         let persistent_horizontal_reject = match (
             self.horizontal_residual_persistence,
             horizontal_residual_persistent_score,
@@ -420,13 +586,41 @@ impl StatisticalMonitor {
             }
             _ => false,
         };
-        let trust_level = classify_trust_level(
-            accumulated_risk,
-            self.thresholds,
-            persistent_clock_reject || persistent_horizontal_reject,
-            immediate_flag_triggered,
-            immediate_reject_triggered,
+        let persistent_horizontal_flag = persistence_warning_triggered(
+            self.persistence_warning,
+            self.horizontal_residual_persistence
+                .map(|state| state.config.rejection_score_threshold),
+            horizontal_residual_persistent_score,
         );
+        let persistent_velocity_reject = match (
+            self.velocity_residual_persistence,
+            velocity_residual_persistent_score,
+        ) {
+            (Some(persistence_state), Some(score)) => {
+                score >= persistence_state.config.rejection_score_threshold
+            }
+            _ => false,
+        };
+        let persistent_velocity_flag = persistence_warning_triggered(
+            self.persistence_warning,
+            self.velocity_residual_persistence
+                .map(|state| state.config.rejection_score_threshold),
+            velocity_residual_persistent_score,
+        );
+        let raw_reject = persistent_clock_reject
+            || persistent_horizontal_reject
+            || persistent_velocity_reject
+            || immediate_reject_triggered
+            || accumulated_risk >= self.thresholds.rejected_risk_threshold;
+        let raw_flag = persistent_clock_flag
+            || persistent_horizontal_flag
+            || persistent_velocity_flag
+            || immediate_flag_triggered
+            || accumulated_risk >= self.thresholds.flagged_risk_threshold;
+        let trust_level = match &mut self.reject_confirmation {
+            Some(reject_confirmation) => reject_confirmation.classify(raw_reject, raw_flag),
+            None => classify_trust_level(raw_reject, raw_flag),
+        };
 
         Ok(MonitorVerdict {
             squared_mahalanobis_distance,
@@ -436,6 +630,7 @@ impl StatisticalMonitor {
             clock_bias_squared_mahalanobis_distance,
             clock_bias_persistent_score,
             horizontal_residual_persistent_score,
+            velocity_residual_persistent_score,
             accumulated_risk,
             innovation,
             barometer_residual_m,
@@ -540,22 +735,29 @@ fn squared_mahalanobis_distance(
     Ok(innovation.dot(&innovation_whitened))
 }
 
-fn classify_trust_level(
-    accumulated_risk: f32,
-    thresholds: ChiSquareThresholdConfig,
-    persistent_clock_reject: bool,
-    immediate_flag_triggered: bool,
-    immediate_reject_triggered: bool,
-) -> TrustLevel {
-    if persistent_clock_reject
-        || immediate_reject_triggered
-        || accumulated_risk >= thresholds.rejected_risk_threshold
-    {
+fn classify_trust_level(raw_reject: bool, raw_flag: bool) -> TrustLevel {
+    if raw_reject {
         TrustLevel::Rejected
-    } else if immediate_flag_triggered || accumulated_risk >= thresholds.flagged_risk_threshold {
+    } else if raw_flag {
         TrustLevel::Flagged
     } else {
         TrustLevel::Trusted
+    }
+}
+
+fn persistence_warning_triggered(
+    warning_config: Option<PersistenceWarningConfig>,
+    rejection_score_threshold: Option<f32>,
+    score: Option<f32>,
+) -> bool {
+    match (warning_config, rejection_score_threshold, score) {
+        (Some(config), Some(threshold), Some(score))
+            if config.score_fraction_of_rejection > 0.0
+                && config.score_fraction_of_rejection < 1.0 =>
+        {
+            score >= threshold * config.score_fraction_of_rejection
+        }
+        _ => false,
     }
 }
 
@@ -636,7 +838,8 @@ mod tests {
 
     use super::{
         ClockBiasPersistenceConfig, EwmaRiskAccumulator, HorizontalResidualPersistenceConfig,
-        ImmediateTriggerConfig, StatisticalMonitor,
+        ImmediateTriggerConfig, PersistenceWarningConfig, StatisticalMonitor,
+        VelocityResidualPersistenceConfig,
     };
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
@@ -847,6 +1050,89 @@ mod tests {
         }
 
         assert_eq!(last_verdict, TrustLevel::Rejected);
+    }
+
+    #[test]
+    fn persistent_velocity_residual_rejects_sustained_velocity_drift() {
+        let nominal = NominalState {
+            timestamp_s: 45.0,
+            position_ned_m: Vector3::zeros(),
+            velocity_ned_mps: Vector3::zeros(),
+            attitude_body_to_ned: UnitQuaternion::identity(),
+            accel_bias_mps2: Vector3::zeros(),
+            gyro_bias_rps: Vector3::zeros(),
+            geodetic_reference: None,
+        };
+        let predicted_state = EskfState::new(nominal, StateCovariance::identity() * 1.0e-3);
+        let gps_observation = GpsObservation::from_accuracy_metrics(
+            45.0,
+            Vector3::zeros(),
+            Vector3::new(3.0, -2.0, 0.0),
+            5.0,
+            6.0,
+            0.5,
+            1.5,
+        );
+        let thresholds = ChiSquareThresholdConfig::new(12.592, 22.458);
+        let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(0.05))
+            .with_velocity_residual_persistence(VelocityResidualPersistenceConfig::new(
+                1.0, 10.0, 0.5,
+            ))
+            .with_persistence_warning(PersistenceWarningConfig::new(0.5));
+
+        let mut last_verdict = TrustLevel::Trusted;
+        let mut last_velocity_score = 0.0;
+        for _ in 0..4 {
+            let verdict = monitor
+                .evaluate_gps_observation(&predicted_state, &gps_observation)
+                .unwrap();
+            last_verdict = verdict.trust_level;
+            last_velocity_score = verdict.velocity_residual_persistent_score.unwrap_or(0.0);
+        }
+
+        assert!(last_velocity_score >= 10.0);
+        assert_eq!(last_verdict, TrustLevel::Rejected);
+    }
+
+    #[test]
+    fn persistent_velocity_residual_flags_before_rejection_threshold() {
+        let nominal = NominalState {
+            timestamp_s: 46.0,
+            position_ned_m: Vector3::zeros(),
+            velocity_ned_mps: Vector3::zeros(),
+            attitude_body_to_ned: UnitQuaternion::identity(),
+            accel_bias_mps2: Vector3::zeros(),
+            gyro_bias_rps: Vector3::zeros(),
+            geodetic_reference: None,
+        };
+        let predicted_state = EskfState::new(nominal, StateCovariance::identity() * 1.0e-3);
+        let gps_observation = GpsObservation::from_accuracy_metrics(
+            46.0,
+            Vector3::zeros(),
+            Vector3::new(2.0, 0.0, 0.0),
+            5.0,
+            6.0,
+            0.5,
+            1.5,
+        );
+        let thresholds = ChiSquareThresholdConfig::new(1_000.0, 2_000.0);
+        let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(0.05))
+            .with_velocity_residual_persistence(VelocityResidualPersistenceConfig::new(
+                1.0, 10.0, 0.5,
+            ))
+            .with_persistence_warning(PersistenceWarningConfig::new(0.5));
+
+        let first = monitor
+            .evaluate_gps_observation(&predicted_state, &gps_observation)
+            .unwrap();
+        let second = monitor
+            .evaluate_gps_observation(&predicted_state, &gps_observation)
+            .unwrap();
+
+        assert_eq!(first.trust_level, TrustLevel::Trusted);
+        assert_eq!(second.trust_level, TrustLevel::Flagged);
+        assert!(second.velocity_residual_persistent_score.unwrap() >= 5.0);
+        assert!(second.velocity_residual_persistent_score.unwrap() < 10.0);
     }
 
     #[test]

@@ -22,7 +22,7 @@ Implemented today:
 - IMU-driven ESKF-style propagation in local NED coordinates
 - GPS innovation residuals with Mahalanobis distance and EWMA risk accumulation
 - optional immediate trigger gates for large single-epoch GPS residuals
-- auxiliary barometer altitude and heading consistency checks
+- auxiliary barometer altitude checks and opt-in heading consistency checks
 - MAVLink UDP ingestion for `HIGHRES_IMU`, `GPS_RAW_INT`, and `GLOBAL_POSITION_INT`
 - signed evidence packets using SHA-256 and Ed25519
 - a process -> sign -> purge orchestrator
@@ -43,7 +43,7 @@ The repository is in the "prototype with measured simulator and processed-data r
 
 - The Rust crate builds cleanly.
 - The core crate still checks with `--no-default-features`.
-- The library test suite currently passes `30/30`.
+- The library test suite currently passes `32/32`.
 - PX4 SIH paths, a live MAVLink spoof proxy, and a processed TEXBAT harness have been exercised locally.
 
 ## Benchmark Snapshot
@@ -54,10 +54,10 @@ The table below is the shortest honest summary of what has actually been run.
 | --- | --- | --- | --- |
 | PX4 SIH replay, nominal | 60 captured synchronized samples | anomaly FPR `0.000`, rejected FPR `0.000` | clean behavior on one narrow simulator capture |
 | PX4 SIH replay, injected spoof | same capture with software-injected GPS offset | anomaly TPR `1.000`, rejected TPR `1.000` | full rejection on one replayed spoof profile |
-| PX4 SIH adversarial replay sweep, structured export | 144 spoof profiles per captured mission dataset, exported as JSON/CSV | hover/forward/climb all contain zero-rejection slow-ramp cases; turn has no zero-rejection cases but high nominal FPR | the repository now maps evasion floors systematically instead of relying only on a few hand-picked ramps |
-| PX4 SIH multi-mission nominal runs | hover, forward, turn, climb offboard profiles in SIH | hover `0.000`, forward `0.000`, climb `0.000`, turn `0.717` anomaly FPR | the detector stays clean in three measured regimes but currently breaks badly on the measured turn profile |
-| PX4 SIH live MAVLink spoof proxy, abrupt offset | live PX4 SIH stream, spoof onset at `1.5 s` inside the proxy after a `1 s` startup delay | `13/0/17` trusted/flagged/rejected | the measured run rejected on the first spoofed GPS packet; verdicts `#1` through `#14` were clean pre-spoof packets |
-| PX4 SIH live MAVLink spoof proxy, gradual carry-off | live PX4 SIH stream, `30 m` north ramp over `2.5 s` after the same onset timing | `25/4/1` trusted/flagged/rejected | the measured run stayed clean before spoof onset, then accumulated toward rejection and crossed into `Rejected` at verdict `#30` |
+| PX4 SIH adversarial replay sweep, structured export | 144 spoof profiles per captured mission dataset, exported as JSON/CSV | hover/forward/turn/climb still contain zero-rejection slow-ramp cases | the repository now maps evasion floors systematically instead of relying only on a few hand-picked ramps |
+| PX4 SIH multi-mission nominal runs | hover, forward, turn, climb offboard profiles in SIH | all four measured regimes produced `0.000` anomaly FPR | the previous turn false-positive blocker was removed in this SIH path without loosening rejection thresholds |
+| PX4 SIH live MAVLink spoof proxy, abrupt offset | live PX4 SIH stream, spoof onset at `1.5 s` inside the proxy after a `1 s` startup delay | `13/2/15` trusted/flagged/rejected | the state machine surfaced two `Flagged` verdicts before confirming `Rejected` |
+| PX4 SIH live MAVLink spoof proxy, gradual carry-off | live PX4 SIH stream, `30 m` north ramp over `2.5 s` after the same onset timing | `25/6/14` trusted/flagged/rejected | the measured run stayed clean before spoof onset, then showed a visible `Trusted -> Flagged -> Rejected` progression |
 | PX4 SIH live MAVLink spoof proxy, calibrated gradual sweep (opt-in) | live PX4 SIH stream, same proxy path with `--calibrate-live` and a conservative `1.0 m` sigma floor | all five tested ramp durations from `30 m / 2.5 s` through `30 m / 40 s` reached `Rejected` | in the measured software-MITM path, the opt-in calibrated mode lowered the live detection floor while preserving `60/0/0` on one clean nominal live run |
 | TEXBAT `ds2` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.978/0.034` | strong result with lower clean false positives than the earlier fixed-noise proxy |
 | TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.953/0.032` | improved gradual-drift sensitivity after calibrating horizontal residual CUSUM from the clean segment |
@@ -67,14 +67,24 @@ These are narrow results. They should not be generalized beyond the exact simula
 
 ## Quantitative Results
 
+### Current Change Acceptance Summary
+
+| Change | Acceptance criterion | Measured result | Decision |
+| --- | --- | --- | --- |
+| turn-regime false-positive fix | turn nominal anomaly FPR below `0.10`; hover/forward/climb stay `0.000` | hover/forward/turn/climb all measured `0.000` anomaly FPR | kept |
+| velocity residual persistence | reduce zero-rejection sweep cases from the stated hover/forward/climb baseline `56/54/56` without regressing nominal FPR or TEXBAT | hover `47`, forward `53`, climb `50`; TEXBAT remained `ds2 0.978/0.034`, `ds3 0.953/0.032`, `ds7 0.999/0.000` | kept |
+| flag-early / confirm-to-reject state machine | abrupt live spoof shows warning before rejection; clean nominal runs keep `0` flags | abrupt live run `13/2/15`, first flag verdict `#14`, first rejection verdict `#16`; nominal replay `60/0/0` | kept |
+
+The implementation note is important: the turn false-positive fix was not shipped as a broad maneuver-aware gating claim. The measured culprit was uncalibrated auxiliary/warning behavior in the PX4 SIH path. Heading observations are now opt-in for that path, while persistence warning flags are opt-in for live operator output.
+
 ### PX4 SIH Capture / Replay
 
 Observed on `2026-05-10` using `scripts/wsl_px4_benchmark.sh 60`:
 
 | Dataset | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| nominal replay | `60 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `333.17 us` | `377.31 us` | `935.51 us` |
-| spoofed replay | `0 / 0 / 60` | `1.000` | `0.000` | `1.000` | `0.000` | `312.32 us` | `334.31 us` | `382.50 us` |
+| nominal replay | `60 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `286.77 us` | `332.60 us` | `2441.92 us` |
+| spoofed replay | `0 / 0 / 60` | `1.000` | `0.000` | `1.000` | `0.000` | `253.53 us` | `340.80 us` | `421.40 us` |
 
 Method notes:
 
@@ -88,18 +98,19 @@ Observed on `2026-05-13` using `scripts/wsl_px4_multi_mission_benchmark.sh 120` 
 
 | Mission | GPS path summary | Nominal verdicts | Nominal anomaly FPR | Standard replayed spoof TPR / rejected TPR | Worst-case rejected TPR in 144-case sweep | Zero-rejection sweep cases |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
-| `hover` | x `[-0.10, 0.23]`, y `[-0.31, 0.17]`, z `[-6.05, 0.03]`, max speed `2.63 m/s` | `120 / 0 / 0` | `0.000` | `0.670 / 0.550` | `0.000` | `56 / 144` |
-| `forward` | x `[0.00, 30.78]`, y `[-0.61, 0.51]`, z `[-6.11, 0.00]`, max speed `4.75 m/s` | `120 / 0 / 0` | `0.000` | `0.684 / 0.510` | `0.000` | `54 / 144` |
-| `turn` | x `[-12.52, 11.72]`, y `[-0.26, 24.61]`, z `[-6.00, 0.10]`, max speed `4.84 m/s` | `34 / 30 / 56` | `0.717` | `0.980 / 0.970` | `0.425` | `0 / 144` |
-| `climb` | x `[-0.03, 10.41]`, y `[-0.55, 0.40]`, z `[-20.01, 0.07]`, max speed `3.11 m/s` | `120 / 0 / 0` | `0.000` | `0.676 / 0.520` | `0.000` | `56 / 144` |
+| `hover` | x `[-0.26, 0.13]`, y `[-0.36, 0.23]`, z `[-6.04, 0.27]`, max speed `2.59 m/s` | `120 / 0 / 0` | `0.000` | `0.951 / 0.676` | `0.000` | `47 / 144` |
+| `forward` | x `[-0.02, 30.94]`, y `[-0.35, 0.27]`, z `[-6.17, 0.15]`, max speed `4.15 m/s` | `120 / 0 / 0` | `0.000` | `0.660 / 0.540` | `0.000` | `53 / 144` |
+| `turn` | x `[-13.00, 11.94]`, y `[-0.06, 24.66]`, z `[-6.10, 0.13]`, max speed `4.79 m/s` | `120 / 0 / 0` | `0.000` | `0.802 / 0.475` | `0.000` | `46 / 144` |
+| `climb` | x `[-0.02, 10.38]`, y `[-0.30, 0.26]`, z `[-19.97, 0.15]`, max speed `3.09 m/s` | `120 / 0 / 0` | `0.000` | `0.554 / 0.455` | `0.000` | `50 / 144` |
 
 Method notes:
 
 - the capture path now supports offboard mission-driving directly in `examples/capture_monitor_dataset.rs`
 - the sweep export is machine-readable: one CSV and one JSON report per mission
-- the current detector is clean on the measured hover, forward, and climb profiles
-- the current detector is not robust to the measured turn profile; this is now an explicit, reproduced gap rather than a hidden one
-- the worst evasion cases in hover, forward, and climb are gradual position-plus-velocity carry-off profiles such as `north_onset_2.0_ramp_10.0_posvel`
+- the current detector is clean on the measured hover, forward, turn, and climb nominal profiles
+- the turn-regime acceptance target was anomaly FPR below `0.10`; the current measured result is `0.000` on this SIH profile
+- the actual turn fix was narrower than the original maneuver-gating hypothesis: heading observations remain implemented but are not enabled by default on the PX4 SIH path, and persistence warning flags are opt-in for live operator output
+- the worst evasion cases remain gradual slow-ramp carry-off profiles; velocity persistence reduced zero-rejection cases, but did not eliminate them
 
 ### PX4 SIH Live MAVLink Spoof Proxy
 
@@ -114,9 +125,9 @@ Observed on `2026-05-12` using `scripts/wsl_px4_live_spoof.sh`:
 | total packets processed | `339` |
 | IMU packets | `309` |
 | GPS packets | `30` |
-| verdicts | `13 trusted / 0 flagged / 17 rejected` |
-| first spoofed GPS packet in the measured run | verdict `#15` |
-| first rejection | verdict `#15` |
+| verdicts | `13 trusted / 2 flagged / 15 rejected` |
+| first flagged verdict | verdict `#14` |
+| first rejection | verdict `#16` |
 | evidence output | `artifacts/wsl_px4_live_spoof_evidence.bin` |
 | observed evidence size | `6090 bytes` |
 
@@ -126,6 +137,7 @@ Method notes:
 - `examples/px4_spoof_proxy.rs` acted as a MAVLink man-in-the-middle
 - only `GLOBAL_POSITION_INT` was modified
 - the earlier "first rejection at verdict `#14` / `1.5 s` lag" wording was misleading because verdict numbering started before the proxy began spoofing
+- the current state machine intentionally emits `Flagged` before `Rejected`, so abrupt-spoof confirmation now takes two GPS verdicts after the first flag
 - this is a live software-level MAVLink spoof path, not an RF-level spoof or receiver compromise
 
 Observed on `2026-05-13` using `scripts/wsl_px4_gradual_spoof.sh`:
@@ -136,13 +148,13 @@ Observed on `2026-05-13` using `scripts/wsl_px4_gradual_spoof.sh`:
 | proxy spoof onset after proxy start | `1.5 s` |
 | injected position offset | north ramp from `0 m` to `30 m` over `2.5 s` |
 | injected velocity offset | `0 m/s` |
-| total packets processed | `328` |
-| IMU packets | `298` |
-| GPS packets | `30` |
-| verdicts | `25 trusted / 4 flagged / 1 rejected` |
+| total packets processed | `494` |
+| IMU packets | `449` |
+| GPS packets | `45` |
+| verdicts | `25 trusted / 6 flagged / 14 rejected` |
 | first clearly spoof-affected GPS packet in the measured run | verdict `#16` |
 | first flagged verdict | verdict `#26` |
-| first rejection | verdict `#30` |
+| first rejection | verdict `#32` |
 | evidence output | `artifacts/wsl_px4_gradual_spoof_evidence.bin` |
 
 Observed on `2026-05-13` using the same live proxy path with opt-in live warm-up calibration:
@@ -176,10 +188,10 @@ Observed on `2026-05-12` using `cargo run --example run_texbat_harness` after do
 
 | Scenario | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `185.23 us` | `267.60 us` | `309.00 us` |
-| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `184.16 us` | `212.60 us` | `340.60 us` |
-| `ds3` | `651 / 4 / 1441` | `0.953` | `0.032` | `0.953` | `0.025` | `184.00 us` | `266.10 us` | `371.80 us` |
-| `ds7` | `567 / 0 / 1608` | `0.999` | `0.000` | `0.999` | `0.000` | `181.67 us` | `193.00 us` | `340.00 us` |
+| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `182.27 us` | `200.50 us` | `286.50 us` |
+| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `178.57 us` | `186.50 us` | `249.80 us` |
+| `ds3` | `651 / 4 / 1441` | `0.953` | `0.032` | `0.953` | `0.025` | `181.04 us` | `191.70 us` | `308.40 us` |
+| `ds7` | `567 / 0 / 1608` | `0.999` | `0.000` | `0.999` | `0.000` | `180.42 us` | `189.10 us` | `339.80 us` |
 
 Method notes:
 
@@ -196,12 +208,12 @@ Method notes:
 The current evidence supports these narrower statements:
 
 - the monitor path works end to end on live PX4 SIH telemetry
-- the current residual checks rejected the measured abrupt live MAVLink spoof on the first spoofed GPS packet
+- the current residual checks flagged the measured abrupt live MAVLink spoof first, then confirmed rejection two verdicts later
 - the current gradual carry-off live profile stayed clean before spoof onset, then reached rejection within `15` verdicts of spoof onset without introducing false positives on the nominal replay benchmark
 - the new opt-in live calibration mode lowered the measured live carry-off floor from the earlier `~3-6 m/s` band to at least the tested `~0.75 m/s` profile on the same software-MITM PX4 path while staying clean on one `60`-verdict live nominal run and one `60`-sample replay nominal run
 - the current processed-TEXBAT harness performs strongly on `ds2` and `ds7`, and reaches a materially improved but still narrow result on `ds3`
 - the new TEXBAT ablation runs show that the clock-bias path and persistence logic are carrying most of the detection burden on `ds3`
-- the new structured PX4 replay sweep shows that the current detector still has broad slow-ramp evasion space in calm regimes and a severe false-positive problem in the measured turn regime
+- the new structured PX4 replay sweep shows that the current detector still has broad slow-ramp evasion space even after the measured turn-regime false positives were removed
 
 The current evidence does not support these broader statements:
 
@@ -245,7 +257,7 @@ The repository now includes a standalone verifier for the framed `FileSink` outp
 cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin
 ```
 
-Observed on `2026-05-11` against the live PX4 spoof evidence file:
+Observed on `2026-05-13` against the live PX4 spoof evidence file:
 
 - packets verified: `30`
 - trusted verdicts: `13`
@@ -259,12 +271,14 @@ Core checks used locally:
 
 ```powershell
 cargo fmt --all
-cargo check --no-default-features --lib
+cargo check --no-default-features
 cargo check --all-targets
 cargo test --lib
 cargo check --examples
-cargo run --example run_adversarial_sweep -- artifacts/px4_monitor_dataset.csv --dataset-label px4_capture --output-dir artifacts/sweeps
+cargo run --example run_adversarial_sweep -- artifacts/px4_hover_dataset.csv --dataset-label hover --output-dir artifacts/sweeps
+cargo run --example run_texbat_harness
 cargo run --example run_texbat_ablation
+cargo run --example run_texbat_baselines
 cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin
 ```
 

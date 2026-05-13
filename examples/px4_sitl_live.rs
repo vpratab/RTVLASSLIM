@@ -9,7 +9,8 @@ use rtvlas::{
     statistical_monitor::{
         monitor::{
             EwmaRiskAccumulator, HorizontalResidualPersistenceConfig, ImmediateTriggerConfig,
-            StatisticalMonitor,
+            PersistenceWarningConfig, RejectConfirmationConfig, StatisticalMonitor,
+            VelocityResidualPersistenceConfig,
         },
         observation::ChiSquareThresholdConfig,
     },
@@ -187,11 +188,12 @@ fn run() -> Result<(), String> {
             if verbose_monitor {
                 if let Some(monitor_verdict) = orchestrator.last_monitor_verdict() {
                     println!(
-                        "verdict #{:02} {:?} h_residual_m={:.3} h_cusum={} clock_cusum={} after {:.2?} (trusted={}, flagged={}, rejected={})",
+                        "verdict #{:02} {:?} h_residual_m={:.3} h_cusum={} v_cusum={} clock_cusum={} after {:.2?} (trusted={}, flagged={}, rejected={})",
                         report.verdicts_emitted,
                         trust_level,
                         monitor_verdict.innovation.fixed_rows::<2>(0).norm(),
                         format_optional_score(monitor_verdict.horizontal_residual_persistent_score),
+                        format_optional_score(monitor_verdict.velocity_residual_persistent_score),
                         format_optional_score(monitor_verdict.clock_bias_persistent_score),
                         started_at.elapsed(),
                         report.trusted_verdicts,
@@ -295,6 +297,10 @@ fn monitor(
                 horizontal_persistence_reject.unwrap_or(65.0),
             ));
     }
+    monitor = monitor
+        .with_velocity_residual_persistence(VelocityResidualPersistenceConfig::new(1.0, 25.0, 0.5));
+    monitor = monitor.with_reject_confirmation(RejectConfirmationConfig::new(2));
+    monitor = monitor.with_persistence_warning(PersistenceWarningConfig::new(0.5));
 
     if immediate_gps_flag_threshold.is_some()
         || immediate_gps_reject_threshold.is_some()

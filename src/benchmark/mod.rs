@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ekf_core::state::{ATT_IDX, EskfState, NominalState, POS_IDX, StateCovariance, VEL_IDX},
     statistical_monitor::{
-        monitor::{EwmaRiskAccumulator, MonitorError, StatisticalMonitor},
+        monitor::{
+            EwmaRiskAccumulator, MonitorError, StatisticalMonitor,
+            VelocityResidualPersistenceConfig,
+        },
         observation::{
             BarometerObservation, ChiSquareThresholdConfig, GpsObservation, HeadingObservation,
             TrustLevel,
@@ -406,7 +409,8 @@ pub fn run_monitor_dataset_rows<I>(
 where
     I: IntoIterator<Item = MonitorDatasetRow>,
 {
-    let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha));
+    let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha))
+        .with_velocity_residual_persistence(VelocityResidualPersistenceConfig::new(1.0, 25.0, 0.5));
     let mut report = MonitorDatasetReport::default();
     let mut evaluation_latencies_us = Vec::new();
 

@@ -210,6 +210,7 @@ pub struct MonitorVerdict {
     pub clock_bias_squared_mahalanobis_distance: Option<f32>,
     pub clock_bias_persistent_score: Option<f32>,
     pub horizontal_residual_persistent_score: Option<f32>,
+    pub velocity_residual_persistent_score: Option<f32>,
     pub accumulated_risk: f32,
     pub innovation: InnovationVector,
     pub barometer_residual_m: Option<f32>,

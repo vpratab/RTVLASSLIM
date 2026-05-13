@@ -493,6 +493,7 @@ mod tests {
             clock_bias_squared_mahalanobis_distance: None,
             clock_bias_persistent_score: None,
             horizontal_residual_persistent_score: None,
+            velocity_residual_persistent_score: None,
             accumulated_risk: if matches!(trust_level, TrustLevel::Trusted) {
                 1.5
             } else {

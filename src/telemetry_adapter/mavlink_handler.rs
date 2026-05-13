@@ -69,6 +69,7 @@ impl Default for GpsNoiseModel {
 pub struct AuxiliaryObservationConfig {
     pub barometer_altitude_std_m: f32,
     pub heading_std_rad: f32,
+    pub enable_heading_observation: bool,
 }
 
 impl Default for AuxiliaryObservationConfig {
@@ -76,6 +77,7 @@ impl Default for AuxiliaryObservationConfig {
         Self {
             barometer_altitude_std_m: 1.5,
             heading_std_rad: 0.12,
+            enable_heading_observation: false,
         }
     }
 }
@@ -486,12 +488,20 @@ impl MavlinkSubscriber {
             &mut self.home_pressure_altitude_m,
             self.config.auxiliary_observation_config,
         );
-        let heading_observation = extract_heading_observation(
-            timestamp_s,
-            Vector3::new(message.xacc, message.yacc, message.zacc),
-            Vector3::new(message.xmag, message.ymag, message.zmag),
-            self.config.auxiliary_observation_config,
-        );
+        let heading_observation = if self
+            .config
+            .auxiliary_observation_config
+            .enable_heading_observation
+        {
+            extract_heading_observation(
+                timestamp_s,
+                Vector3::new(message.xacc, message.yacc, message.zacc),
+                Vector3::new(message.xmag, message.ymag, message.zmag),
+                self.config.auxiliary_observation_config,
+            )
+        } else {
+            None
+        };
 
         AuxiliaryObservations {
             barometer_observation,
@@ -1044,11 +1054,14 @@ mod tests {
 
     #[test]
     fn udp_loopback_ingests_auxiliary_and_gps_observations() {
-        let mut subscriber = MavlinkSubscriber::with_config(
-            "udpin:0.0.0.0:14557",
-            MavlinkSubscriberConfig::default(),
-        )
-        .unwrap();
+        let config = MavlinkSubscriberConfig {
+            auxiliary_observation_config: AuxiliaryObservationConfig {
+                enable_heading_observation: true,
+                ..AuxiliaryObservationConfig::default()
+            },
+            ..MavlinkSubscriberConfig::default()
+        };
+        let mut subscriber = MavlinkSubscriber::with_config("udpin:0.0.0.0:14557", config).unwrap();
 
         thread::spawn(|| {
             thread::sleep(Duration::from_millis(100));

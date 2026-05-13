@@ -45,7 +45,7 @@ cd "$workspace" || exit 1
 timeout 25s target/debug/examples/px4_sitl_live \
   --connection udpin:127.0.0.1:18571 \
   --skip-handshake \
-  --verdict-limit 30 \
+  --verdict-limit 45 \
   --evidence artifacts/wsl_px4_gradual_spoof_evidence.bin \
   > artifacts/wsl_px4_gradual_spoof_stdout.log \
   2> artifacts/wsl_px4_gradual_spoof_stderr.log &
