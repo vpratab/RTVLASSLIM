@@ -56,8 +56,8 @@ The table below is the shortest honest summary of what has actually been run.
 | PX4 SIH replay, injected spoof | same capture with software-injected GPS offset | anomaly TPR `1.000`, rejected TPR `1.000` | full rejection on one replayed spoof profile |
 | PX4 SIH live MAVLink spoof proxy | live PX4 SIH stream, spoof onset at `1.5 s` | `13/0/17` trusted/flagged/rejected | verdicts stayed trusted before spoof onset and then flipped to sustained rejection |
 | TEXBAT `ds2` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.978/0.034` | strong result with lower clean false positives than the earlier fixed-noise proxy |
-| TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.907/0.032` | improved gradual-drift sensitivity after adding horizontal residual persistence |
-| TEXBAT `ds7` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.705/0.000` | partial detection on a harder processed-dataset scenario |
+| TEXBAT `ds3` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.953/0.032` | improved gradual-drift sensitivity after calibrating horizontal residual CUSUM from the clean segment |
+| TEXBAT `ds7` processed replay | UT processed `navsol.mat` | anomaly TPR/FPR `0.999/0.000` | near-complete detection on this processed-dataset scenario after the same calibration |
 
 These are narrow results. They should not be generalized beyond the exact simulator and processed-data paths described in this repository.
 
@@ -108,10 +108,10 @@ Observed on `2026-05-12` using `cargo run --example run_texbat_harness` after do
 
 | Scenario | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `182.46 us` | `212.40 us` | `291.00 us` |
-| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `184.64 us` | `264.20 us` | `367.30 us` |
-| `ds3` | `719 / 4 / 1373` | `0.907` | `0.032` | `0.907` | `0.025` | `191.02 us` | `273.80 us` | `292.20 us` |
-| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `189.31 us` | `260.40 us` | `386.00 us` |
+| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `185.23 us` | `267.60 us` | `309.00 us` |
+| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `184.16 us` | `212.60 us` | `340.60 us` |
+| `ds3` | `651 / 4 / 1441` | `0.953` | `0.032` | `0.953` | `0.025` | `184.00 us` | `266.10 us` | `371.80 us` |
+| `ds7` | `567 / 0 / 1608` | `0.999` | `0.000` | `0.999` | `0.000` | `181.67 us` | `193.00 us` | `340.00 us` |
 
 Method notes:
 
@@ -120,7 +120,8 @@ Method notes:
 - there is no paired IMU stream from TEXBAT in this repository
 - the current harness now calibrates replay noise from the pre-spoof clean segment, including per-axis position spread and clock-bias spread
 - `ds3` was originally weak because the processed attack looked more like a sustained moderate horizontal drift than a large one-shot jump
-- the current full profile adds horizontal residual persistence on top of the older clock-bias persistence, which raises `ds3` anomaly TPR from `0.749` to `0.907` at the same measured anomaly FPR of `0.032`
+- the current full profile calibrates a horizontal residual CUSUM directly from the pre-spoof clean segment and runs it in parallel with the older clock-bias persistence
+- on the current processed-TEXBAT path, that raises `ds3` anomaly TPR from `0.907` to `0.953` at the same measured anomaly FPR of `0.032`
 
 ## Interpretation
 
@@ -151,16 +152,19 @@ Observed on `2026-05-12`:
 | Scenario | Profile | Anomaly TPR | Anomaly FPR | What it shows |
 | --- | --- | ---: | ---: | --- |
 | `ds2` | `full` | `0.978` | `0.034` | current full monitor operating point |
+| `ds2` | `no_horiz_cusum` | `0.978` | `0.034` | new horizontal CUSUM does not materially change this easier case |
 | `ds2` | `single_epoch_gps_clock` | `0.979` | `0.033` | persistence matters less on this easier processed case |
 | `ds2` | `single_epoch_gps_only` | `0.000` | `0.016` | GPS-only residuals do not carry the detection here |
-| `ds3` | `full` | `0.907` | `0.032` | current best processed result on the hardest case here |
+| `ds3` | `full` | `0.953` | `0.032` | current best processed result on the hardest case here |
+| `ds3` | `no_horiz_cusum` | `0.749` | `0.032` | isolating the new horizontal CUSUM shows its direct contribution |
 | `ds3` | `no_persistence` | `0.000` | `0.032` | removing persistence collapses detection on `ds3` |
 | `ds3` | `single_epoch_gps_clock` | `0.000` | `0.030` | single-epoch clock checks alone are also insufficient on `ds3` |
-| `ds7` | `full` | `0.705` | `0.000` | current partial-detection result |
-| `ds7` | `no_persistence` | `0.662` | `0.000` | persistence helps, but less dramatically than on `ds3` |
+| `ds7` | `full` | `0.999` | `0.000` | current best processed result on this scenario |
+| `ds7` | `no_horiz_cusum` | `0.705` | `0.000` | the new horizontal CUSUM is carrying most of the gain here |
+| `ds7` | `no_persistence` | `0.662` | `0.000` | persistence still helps beyond one-shot checks |
 | `ds7` | `single_epoch_gps_only` | `0.000` | `0.000` | the GPS-only baseline again fails completely here |
 
-This does not prove the architecture is globally optimal, but it does answer one basic question: the harder processed-replay detections are coming from sequential logic, not from plain one-shot GPS residual thresholds. On `ds3`, single-epoch checks still fail completely, while the full persistence path reaches `0.907` anomaly TPR.
+This does not prove the architecture is globally optimal, but it does answer one basic question: the harder processed-replay detections are coming from sequential logic, not from plain one-shot GPS residual thresholds. On `ds3`, single-epoch checks still fail completely, while the full persistence path reaches `0.953` anomaly TPR.
 
 ## Evidence Verification
 

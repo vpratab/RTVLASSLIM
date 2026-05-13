@@ -85,6 +85,14 @@ fn run() -> Result<(), String> {
     let profiles = vec![
         TexbatMonitorProfile::full(0.6).named("full"),
         TexbatMonitorProfile {
+            profile_name: "no_horiz_cusum".to_owned(),
+            ewma_alpha: 0.6,
+            use_clock_bias_observation: true,
+            clock_bias_persistence: Some(ClockBiasPersistenceConfig::new(0.9, 92.0)),
+            horizontal_residual_persistence: None,
+            immediate_triggers: None,
+        },
+        TexbatMonitorProfile {
             profile_name: "full_hybrid".to_owned(),
             ewma_alpha: 0.6,
             use_clock_bias_observation: true,

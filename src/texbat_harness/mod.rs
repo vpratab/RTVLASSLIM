@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use libm::{atan2, cos, sin, sqrt};
+use libm::{atan2, cos, sin, sqrt, sqrtf};
 use matfile::{MatFile, NumericData};
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 use serde::Serialize;
@@ -119,6 +119,9 @@ pub struct TexbatScenarioReport {
     pub calibrated_position_std_ned_m: Vector3<f32>,
     pub calibrated_velocity_std_ned_mps: Vector3<f32>,
     pub calibrated_clock_bias_std_m: f32,
+    pub calibrated_horizontal_innovation_std_m: Option<f32>,
+    pub calibrated_horizontal_cusum_slack_sigma: Option<f32>,
+    pub calibrated_horizontal_cusum_threshold: Option<f32>,
 }
 
 #[derive(Clone, Debug)]
@@ -295,6 +298,12 @@ struct EmpiricalNoiseCalibration {
     clock_bias_std_m: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct HorizontalResidualCusumCalibration {
+    innovation_std_m: f32,
+    config: HorizontalResidualPersistenceConfig,
+}
+
 pub fn scenario_onset_in_file_seconds(
     scenario_offset_from_clean_s: f64,
     spoof_onset_after_scenario_2_start_s: f64,
@@ -435,13 +444,23 @@ fn evaluate_aligned_samples(
     thresholds: ChiSquareThresholdConfig,
     profile: &TexbatMonitorProfile,
 ) -> Result<TexbatScenarioReport, TexbatError> {
+    let calibrated_horizontal_residual_persistence =
+        profile.horizontal_residual_persistence.map(|fallback| {
+            calibrate_horizontal_residual_persistence(
+                config,
+                &aligned_data.samples,
+                aligned_data.empirical_noise_calibration,
+                fallback,
+            )
+        });
     let mut monitor =
         StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(profile.ewma_alpha));
     if let Some(clock_bias_persistence) = profile.clock_bias_persistence {
         monitor = monitor.with_clock_bias_persistence(clock_bias_persistence);
     }
-    if let Some(horizontal_residual_persistence) = profile.horizontal_residual_persistence {
-        monitor = monitor.with_horizontal_residual_persistence(horizontal_residual_persistence);
+    if let Some(horizontal_residual_persistence) = calibrated_horizontal_residual_persistence {
+        monitor =
+            monitor.with_horizontal_residual_persistence(horizontal_residual_persistence.config);
     }
     if let Some(immediate_triggers) = profile.immediate_triggers {
         monitor = monitor.with_immediate_triggers(immediate_triggers);
@@ -459,6 +478,12 @@ fn evaluate_aligned_samples(
             .empirical_noise_calibration
             .velocity_std_ned_mps,
         calibrated_clock_bias_std_m: aligned_data.empirical_noise_calibration.clock_bias_std_m,
+        calibrated_horizontal_innovation_std_m: calibrated_horizontal_residual_persistence
+            .map(|calibration| calibration.innovation_std_m),
+        calibrated_horizontal_cusum_slack_sigma: calibrated_horizontal_residual_persistence
+            .map(|calibration| calibration.config.slack_sigma),
+        calibrated_horizontal_cusum_threshold: calibrated_horizontal_residual_persistence
+            .map(|calibration| calibration.config.rejection_score_threshold),
         ..TexbatScenarioReport::default()
     };
     let mut latencies_us = Vec::with_capacity(aligned_data.samples.len());
@@ -542,6 +567,56 @@ fn evaluate_aligned_samples(
     }
 
     Ok(report)
+}
+
+fn calibrate_horizontal_residual_persistence(
+    config: &TexbatScenarioConfig,
+    samples: &[AlignedReplaySample],
+    empirical_noise_calibration: EmpiricalNoiseCalibration,
+    fallback_config: HorizontalResidualPersistenceConfig,
+) -> HorizontalResidualCusumCalibration {
+    let calibration_samples: Vec<&AlignedReplaySample> = samples
+        .iter()
+        .filter(|sample| !sample.label_spoofed)
+        .collect();
+    let source = if calibration_samples.is_empty() {
+        samples.iter().collect::<Vec<_>>()
+    } else {
+        calibration_samples
+    };
+
+    let innovation_std_m =
+        horizontal_innovation_std_m(config, empirical_noise_calibration).max(1.0e-6);
+    let mut normalized_horizontal_residuals: Vec<f32> = source
+        .iter()
+        .map(|sample| {
+            let delta_x_m = sample.observed_position_ned_m.x - sample.reference_position_ned_m.x;
+            let delta_y_m = sample.observed_position_ned_m.y - sample.reference_position_ned_m.y;
+            let horizontal_residual_m = sqrtf(delta_x_m * delta_x_m + delta_y_m * delta_y_m);
+            horizontal_residual_m / innovation_std_m
+        })
+        .collect();
+    normalized_horizontal_residuals.sort_by(|left, right| left.total_cmp(right));
+
+    let slack_sigma = percentile_sorted(&normalized_horizontal_residuals, 0.95)
+        .unwrap_or(fallback_config.slack_sigma);
+    let mut score = 0.0_f32;
+    let mut clean_score_ceiling = 0.0_f32;
+    for normalized_horizontal_residual in normalized_horizontal_residuals {
+        score = (score + normalized_horizontal_residual - slack_sigma).max(0.0);
+        clean_score_ceiling = clean_score_ceiling.max(score);
+    }
+
+    let rejection_score_threshold = if clean_score_ceiling <= 0.0 && slack_sigma <= 0.0 {
+        f32::INFINITY
+    } else {
+        clean_score_ceiling + slack_sigma
+    };
+
+    HorizontalResidualCusumCalibration {
+        innovation_std_m,
+        config: HorizontalResidualPersistenceConfig::new(slack_sigma, rejection_score_threshold),
+    }
 }
 
 fn gps_observation_with_noise(
@@ -677,6 +752,31 @@ fn empirical_noise_calibration(
             .clock_bias_std_m
             .max(empirical_clock_bias_std_m * config.empirical_noise_scale),
     }
+}
+
+fn horizontal_innovation_std_m(
+    config: &TexbatScenarioConfig,
+    empirical_noise_calibration: EmpiricalNoiseCalibration,
+) -> f32 {
+    let state_variance_m2 = config.position_state_std_m * config.position_state_std_m;
+    let observed_variance_x_m2 = empirical_noise_calibration.position_std_ned_m.x
+        * empirical_noise_calibration.position_std_ned_m.x;
+    let observed_variance_y_m2 = empirical_noise_calibration.position_std_ned_m.y
+        * empirical_noise_calibration.position_std_ned_m.y;
+    sqrtf(
+        (state_variance_m2 + observed_variance_x_m2)
+            .max(state_variance_m2 + observed_variance_y_m2),
+    )
+}
+
+fn percentile_sorted(values: &[f32], quantile: f32) -> Option<f32> {
+    if values.is_empty() {
+        return None;
+    }
+
+    let clamped_quantile = quantile.clamp(0.0, 1.0);
+    let index = ((values.len() - 1) as f32 * clamped_quantile).floor() as usize;
+    values.get(index).copied()
 }
 
 fn sample_std_vector3(values: impl Iterator<Item = Vector3<f32>>) -> Vector3<f32> {

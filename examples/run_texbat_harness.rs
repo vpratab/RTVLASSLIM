@@ -150,6 +150,24 @@ fn run() -> Result<(), String> {
             "  calibrated clock std (m): {:.2}",
             report.calibrated_clock_bias_std_m
         );
+        if let (
+            Some(horizontal_innovation_std_m),
+            Some(horizontal_cusum_slack_sigma),
+            Some(horizontal_cusum_threshold),
+        ) = (
+            report.calibrated_horizontal_innovation_std_m,
+            report.calibrated_horizontal_cusum_slack_sigma,
+            report.calibrated_horizontal_cusum_threshold,
+        ) {
+            println!(
+                "  calibrated horizontal innovation std (m): {:.2}",
+                horizontal_innovation_std_m
+            );
+            println!(
+                "  calibrated horizontal CUSUM slack/threshold: {:.3}/{:.3}",
+                horizontal_cusum_slack_sigma, horizontal_cusum_threshold
+            );
+        }
     }
 
     Ok(())

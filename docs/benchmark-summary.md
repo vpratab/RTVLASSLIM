@@ -48,26 +48,29 @@ The goal is to separate:
 
 | Scenario | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `182.46 us` | `212.40 us` | `291.00 us` |
-| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `184.64 us` | `264.20 us` | `367.30 us` |
-| `ds3` | `719 / 4 / 1373` | `0.907` | `0.032` | `0.907` | `0.025` | `191.02 us` | `273.80 us` | `292.20 us` |
-| `ds7` | `1040 / 0 / 1135` | `0.705` | `0.000` | `0.705` | `0.000` | `189.31 us` | `260.40 us` | `386.00 us` |
+| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `185.23 us` | `267.60 us` | `309.00 us` |
+| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `184.16 us` | `212.60 us` | `340.60 us` |
+| `ds3` | `651 / 4 / 1441` | `0.953` | `0.032` | `0.953` | `0.025` | `184.00 us` | `266.10 us` | `371.80 us` |
+| `ds7` | `567 / 0 / 1608` | `0.999` | `0.000` | `0.999` | `0.000` | `181.67 us` | `193.00 us` | `340.00 us` |
 
 ### TEXBAT Ablation Snapshot
 
 | Scenario | Profile | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR |
 | --- | --- | ---: | ---: | ---: | ---: |
 | `ds2` | `full` | `0.978` | `0.034` | `0.975` | `0.020` |
+| `ds2` | `no_horiz_cusum` | `0.978` | `0.034` | `0.975` | `0.020` |
 | `ds2` | `single_epoch_gps_clock` | `0.979` | `0.033` | `0.969` | `0.018` |
 | `ds2` | `single_epoch_gps_only` | `0.000` | `0.016` | `0.000` | `0.007` |
-| `ds3` | `full` | `0.907` | `0.032` | `0.907` | `0.025` |
+| `ds3` | `full` | `0.953` | `0.032` | `0.953` | `0.025` |
+| `ds3` | `no_horiz_cusum` | `0.749` | `0.032` | `0.749` | `0.025` |
 | `ds3` | `no_persistence` | `0.000` | `0.032` | `0.000` | `0.025` |
 | `ds3` | `single_epoch_gps_clock` | `0.000` | `0.030` | `0.000` | `0.025` |
-| `ds7` | `full` | `0.705` | `0.000` | `0.705` | `0.000` |
+| `ds7` | `full` | `0.999` | `0.000` | `0.999` | `0.000` |
+| `ds7` | `no_horiz_cusum` | `0.705` | `0.000` | `0.705` | `0.000` |
 | `ds7` | `no_persistence` | `0.662` | `0.000` | `0.615` | `0.000` |
 | `ds7` | `single_epoch_gps_only` | `0.000` | `0.000` | `0.000` | `0.000` |
 
-The strongest takeaway from this table is that the harder processed-TEXBAT detections are not coming from plain GPS residual thresholds alone. On `ds3`, removing persistence drops anomaly TPR from `0.907` to `0.000` at roughly the same false-positive rate.
+The strongest takeaway from this table is that the harder processed-TEXBAT detections are not coming from plain GPS residual thresholds alone. On `ds3`, removing only the new horizontal CUSUM drops anomaly TPR from `0.953` to `0.749` at the same false-positive rate, and removing persistence entirely drops it to `0.000`.
 
 ### Simple Baseline Comparison
 
@@ -83,8 +86,8 @@ Observed on `2026-05-12` with defaults of `5.0 m` for the naive distance thresho
 | --- | --- | --- | --- |
 | `cleanStatic` | `0.000 / 0.000` | `0.000 / 0.000` | `0.000 / 0.000` |
 | `ds2` | `0.978 / 0.034` | `0.445 / 0.102` | `0.000 / 0.018` |
-| `ds3` | `0.907 / 0.032` | `0.631 / 0.125` | `0.000 / 0.025` |
-| `ds7` | `0.705 / 0.000` | `0.000 / 0.000` | `0.000 / 0.000` |
+| `ds3` | `0.953 / 0.032` | `0.631 / 0.125` | `0.000 / 0.025` |
+| `ds7` | `0.999 / 0.000` | `0.000 / 0.000` | `0.000 / 0.000` |
 
 These defaults are intentionally simple, not tuned for best possible baseline performance. The main use is to quantify what the persistence-heavy full detector is buying over simpler alternatives.
 
@@ -117,7 +120,7 @@ Observed on `2026-05-11`:
 - no paired IMU stream is available in this repository
 - clean trajectory is used as a reference proxy
 - replay noise is now calibrated from the pre-spoof clean segment rather than relying only on fixed observation-noise assumptions
-- `ds3` improved materially after adding horizontal residual persistence to the full profile, but it is still a processed-replay result rather than a hardware or raw-IF result
+- `ds3` and `ds7` improved materially after calibrating the horizontal residual CUSUM from the pre-spoof clean segment, but they are still processed-replay results rather than hardware or raw-IF results
 - the optional immediate trigger hooks are implemented, but they did not materially move the first-rejection point in the current live PX4 spoof profile when trialed locally
 
 ## Failure Analysis Note
@@ -128,9 +131,9 @@ The current full profile addresses that by combining:
 
 - calibrated observation noise from the clean pre-spoof segment
 - clock-bias persistence
-- horizontal residual persistence
+- horizontal residual CUSUM with slack and threshold calibrated from the same clean segment
 
-That change is why the current `ds3` full-profile result moved from `0.749 / 0.032` to `0.907 / 0.032` in anomaly TPR/FPR.
+That change is why the current `ds3` full-profile result moved from `0.907 / 0.032` to `0.953 / 0.032` in anomaly TPR/FPR, while `ds7` moved from `0.705 / 0.000` to `0.999 / 0.000`.
 
 ## Reviewer Guidance
 
