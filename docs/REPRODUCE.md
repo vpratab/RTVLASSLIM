@@ -22,13 +22,14 @@ Run:
 cargo fmt --all --check
 cargo check --no-default-features
 cargo check --all-targets
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test --lib
 ```
 
 Successful current result:
 
 ```text
-test result: ok. 37 passed; 0 failed
+test result: ok. 38 passed; 0 failed
 ```
 
 These checks prove the crate builds and the library tests pass on the local development host. They do not measure CPU load, memory use, or scheduling behavior on representative flight hardware.
@@ -169,8 +170,9 @@ Expected current behavior:
 
 - Nominal verdicts stay `120/0/0` on each mission dataset.
 - Abrupt takeover reaches `1.000` rejected TPR.
-- SDR-style 30 m / 10 s takeover reaches about `0.858-0.867` rejected TPR.
-- Hold-last-fix / frozen GPS remains `0.000` rejected TPR in this replay setup and should be treated as a known gap, not a passed test.
+- SDR-style 30 m / 10 s takeover reaches about `0.894-0.914` rejected TPR.
+- Hold-last-fix / frozen GPS reaches about `0.705-0.788` rejected TPR in this generated replay setup. Treat this as partial generated-replay coverage, not proof against real stale receiver outputs.
+- Subtle generated phase-aligned time-push reaches about `0.692-0.762` rejected TPR, weaker than processed TEXBAT `ds7`.
 
 The command writes CSV and JSON under `artifacts/spoof_suites`.
 
@@ -186,8 +188,8 @@ Observed local output:
 
 ```text
 Total monitor evaluations: 3000
-Throughput: 3796.6 evaluations/s
-Latency mean/p95/max per iteration (us): 262.62/273.27/388.00
+Throughput: 3844.8 evaluations/s
+Latency mean/p95/max per iteration (us): 259.27/271.32/397.80
 Final verdict counts: 60/0/0 trusted/flagged/rejected
 ```
 

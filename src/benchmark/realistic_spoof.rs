@@ -38,6 +38,7 @@ pub struct RealisticSpoofCase {
 }
 
 impl RealisticSpoofCase {
+    #[allow(clippy::too_many_arguments)]
     pub fn ramp_hold(
         label: impl Into<String>,
         family: impl Into<String>,
@@ -67,6 +68,7 @@ impl RealisticSpoofCase {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn intermittent(
         label: impl Into<String>,
         family: impl Into<String>,
@@ -238,13 +240,15 @@ pub fn apply_realistic_spoof_case(
     case: &RealisticSpoofCase,
 ) -> Vec<MonitorDatasetRow> {
     let mut frozen_position_ned_m = None;
+    let start_time_s = rows.first().map(|row| row.timestamp_s).unwrap_or(0.0);
 
     rows.iter()
         .cloned()
         .map(|mut row| {
+            let elapsed_time_s = row.timestamp_s - start_time_s;
             match case.shape {
                 ProfileShape::RampHold | ProfileShape::IntermittentRampHold => {
-                    let active_scale = active_profile_scale(row.timestamp_s, case);
+                    let active_scale = active_profile_scale(elapsed_time_s, case);
                     if active_scale > 0.0 {
                         let direction = direction_vector(&row, case.direction_mode);
                         row.gps_px_ned_m +=
@@ -266,7 +270,7 @@ pub fn apply_realistic_spoof_case(
                     }
                 }
                 ProfileShape::FreezePosition => {
-                    if row.timestamp_s >= case.onset_time_s {
+                    if elapsed_time_s >= case.onset_time_s {
                         let frozen = *frozen_position_ned_m.get_or_insert(Vector3::new(
                             row.gps_px_ned_m,
                             row.gps_py_ned_m,
@@ -289,13 +293,13 @@ pub fn apply_realistic_spoof_case(
         .collect()
 }
 
-fn active_profile_scale(timestamp_s: f64, case: &RealisticSpoofCase) -> f32 {
-    if timestamp_s < case.onset_time_s {
+fn active_profile_scale(elapsed_time_s: f64, case: &RealisticSpoofCase) -> f32 {
+    if elapsed_time_s < case.onset_time_s {
         return 0.0;
     }
 
     if case.shape == ProfileShape::IntermittentRampHold
-        && !intermittent_phase_active(timestamp_s, case)
+        && !intermittent_phase_active(elapsed_time_s, case)
     {
         return 0.0;
     }
@@ -303,11 +307,11 @@ fn active_profile_scale(timestamp_s: f64, case: &RealisticSpoofCase) -> f32 {
     if case.ramp_duration_s <= 0.0 {
         1.0
     } else {
-        ((timestamp_s - case.onset_time_s) / case.ramp_duration_s).clamp(0.0, 1.0) as f32
+        ((elapsed_time_s - case.onset_time_s) / case.ramp_duration_s).clamp(0.0, 1.0) as f32
     }
 }
 
-fn intermittent_phase_active(timestamp_s: f64, case: &RealisticSpoofCase) -> bool {
+fn intermittent_phase_active(elapsed_time_s: f64, case: &RealisticSpoofCase) -> bool {
     let Some(period_s) = case.intermittent_period_s else {
         return true;
     };
@@ -315,7 +319,7 @@ fn intermittent_phase_active(timestamp_s: f64, case: &RealisticSpoofCase) -> boo
     if period_s <= f64::EPSILON || duty_cycle >= 1.0 {
         return true;
     }
-    let phase = (timestamp_s - case.onset_time_s).rem_euclid(period_s);
+    let phase = (elapsed_time_s - case.onset_time_s).rem_euclid(period_s);
     phase <= period_s * duty_cycle
 }
 
@@ -384,7 +388,8 @@ mod tests {
 
     #[test]
     fn time_push_profile_injects_clock_bias_without_requiring_existing_clock_fields() {
-        let row = test_row(3.0, 10.0);
+        let first = test_row(10.0, 0.0);
+        let row = test_row(13.0, 10.0);
         let case = RealisticSpoofCase::ramp_hold(
             "clock",
             "test",
@@ -398,27 +403,35 @@ mod tests {
             90.0,
         );
 
-        let rows = apply_realistic_spoof_case(&[row], &case);
+        let rows = apply_realistic_spoof_case(&[first, row], &case);
 
-        assert!(rows[0].label_spoofed);
-        assert_eq!(rows[0].reference_clock_bias_m, Some(0.0));
-        assert_eq!(rows[0].observed_clock_bias_m, Some(90.0));
-        assert_eq!(rows[0].clock_bias_std_m, Some(5.0));
+        assert!(!rows[0].label_spoofed);
+        assert!(rows[1].label_spoofed);
+        assert_eq!(rows[1].reference_clock_bias_m, Some(0.0));
+        assert_eq!(rows[1].observed_clock_bias_m, Some(90.0));
+        assert_eq!(rows[1].clock_bias_std_m, Some(5.0));
     }
 
     #[test]
     fn freeze_profile_holds_first_active_gps_position() {
-        let rows = vec![test_row(1.0, 5.0), test_row(2.0, 10.0), test_row(3.0, 25.0)];
+        let rows = vec![
+            test_row(10.0, 5.0),
+            test_row(11.0, 10.0),
+            test_row(12.0, 25.0),
+            test_row(13.0, 40.0),
+        ];
         let case = RealisticSpoofCase::freeze_position("freeze", "test", "test", "freeze", 2.0);
 
         let rows = apply_realistic_spoof_case(&rows, &case);
 
         assert!(!rows[0].label_spoofed);
-        assert!(rows[1].label_spoofed);
+        assert!(!rows[1].label_spoofed);
         assert!(rows[2].label_spoofed);
-        assert_eq!(rows[1].gps_px_ned_m, 10.0);
-        assert_eq!(rows[2].gps_px_ned_m, 10.0);
+        assert!(rows[3].label_spoofed);
+        assert_eq!(rows[2].gps_px_ned_m, 25.0);
+        assert_eq!(rows[3].gps_px_ned_m, 25.0);
         assert_eq!(rows[2].gps_vx_ned_mps, 0.0);
+        assert_eq!(rows[3].gps_vx_ned_mps, 0.0);
     }
 
     fn test_row(timestamp_s: f64, gps_px_ned_m: f32) -> MonitorDatasetRow {

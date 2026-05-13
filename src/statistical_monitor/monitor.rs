@@ -1,6 +1,7 @@
 use core::fmt;
 
 use libm::sqrtf;
+use nalgebra::Vector3;
 use nalgebra::linalg::Cholesky;
 
 use crate::ekf_core::state::EskfState;
@@ -75,6 +76,33 @@ pub struct VelocityResidualPersistenceConfig {
     pub slack_sigma: f32,
     pub rejection_score_threshold: f32,
     pub normalization_std_floor_mps: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StaleGpsPersistenceConfig {
+    pub max_observed_displacement_m: f32,
+    pub min_predicted_displacement_m: f32,
+    pub max_prediction_position_std_m: f32,
+    pub slack_m: f32,
+    pub rejection_score_threshold_m: f32,
+}
+
+impl StaleGpsPersistenceConfig {
+    pub const fn new(
+        max_observed_displacement_m: f32,
+        min_predicted_displacement_m: f32,
+        max_prediction_position_std_m: f32,
+        slack_m: f32,
+        rejection_score_threshold_m: f32,
+    ) -> Self {
+        Self {
+            max_observed_displacement_m,
+            min_predicted_displacement_m,
+            max_prediction_position_std_m,
+            slack_m,
+            rejection_score_threshold_m,
+        }
+    }
 }
 
 impl VelocityResidualPersistenceConfig {
@@ -216,6 +244,61 @@ struct VelocityResidualPersistenceState {
     score: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StaleGpsPersistenceState {
+    config: StaleGpsPersistenceConfig,
+    score_m: f32,
+    previous_predicted_position_ned_m: Option<Vector3<f32>>,
+    previous_observed_position_ned_m: Option<Vector3<f32>>,
+}
+
+impl StaleGpsPersistenceState {
+    const fn new(config: StaleGpsPersistenceConfig) -> Self {
+        Self {
+            config,
+            score_m: 0.0,
+            previous_predicted_position_ned_m: None,
+            previous_observed_position_ned_m: None,
+        }
+    }
+
+    fn update(
+        &mut self,
+        predicted_position_ned_m: Vector3<f32>,
+        observed_position_ned_m: Vector3<f32>,
+        predicted_horizontal_position_std_m: f32,
+    ) -> f32 {
+        if let (Some(previous_predicted), Some(previous_observed)) = (
+            self.previous_predicted_position_ned_m,
+            self.previous_observed_position_ned_m,
+        ) {
+            let predicted_displacement_m = (predicted_position_ned_m - previous_predicted).norm();
+            let observed_displacement_m = (observed_position_ned_m - previous_observed).norm();
+
+            if predicted_horizontal_position_std_m <= self.config.max_prediction_position_std_m
+                && observed_displacement_m <= self.config.max_observed_displacement_m
+                && predicted_displacement_m >= self.config.min_predicted_displacement_m
+            {
+                let excess_static_m =
+                    predicted_displacement_m - observed_displacement_m - self.config.slack_m;
+                self.score_m = (self.score_m + excess_static_m.max(0.0)).max(0.0);
+            } else {
+                self.score_m = (self.score_m - self.config.slack_m.max(0.0)).max(0.0);
+            }
+        }
+
+        self.previous_predicted_position_ned_m = Some(predicted_position_ned_m);
+        self.previous_observed_position_ned_m = Some(observed_position_ned_m);
+        self.score_m
+    }
+
+    fn reset(&mut self) {
+        self.score_m = 0.0;
+        self.previous_predicted_position_ned_m = None;
+        self.previous_observed_position_ned_m = None;
+    }
+}
+
 impl VelocityResidualPersistenceState {
     const fn new(config: VelocityResidualPersistenceConfig) -> Self {
         Self { config, score: 0.0 }
@@ -275,6 +358,7 @@ pub struct StatisticalMonitor {
     clock_bias_persistence: Option<ClockBiasPersistenceState>,
     horizontal_residual_persistence: Option<HorizontalResidualPersistenceState>,
     velocity_residual_persistence: Option<VelocityResidualPersistenceState>,
+    stale_gps_persistence: Option<StaleGpsPersistenceState>,
     horizontal_residual_normalization_std_override_m: Option<f32>,
     reject_confirmation: Option<RejectConfirmationState>,
     persistence_warning: Option<PersistenceWarningConfig>,
@@ -292,6 +376,7 @@ impl StatisticalMonitor {
             clock_bias_persistence: None,
             horizontal_residual_persistence: None,
             velocity_residual_persistence: None,
+            stale_gps_persistence: None,
             horizontal_residual_normalization_std_override_m: None,
             reject_confirmation: None,
             persistence_warning: None,
@@ -318,6 +403,11 @@ impl StatisticalMonitor {
         config: VelocityResidualPersistenceConfig,
     ) -> Self {
         self.velocity_residual_persistence = Some(VelocityResidualPersistenceState::new(config));
+        self
+    }
+
+    pub fn with_stale_gps_persistence(mut self, config: StaleGpsPersistenceConfig) -> Self {
+        self.stale_gps_persistence = Some(StaleGpsPersistenceState::new(config));
         self
     }
 
@@ -376,6 +466,9 @@ impl StatisticalMonitor {
         }
         if let Some(velocity_residual_persistence) = &mut self.velocity_residual_persistence {
             velocity_residual_persistence.reset();
+        }
+        if let Some(stale_gps_persistence) = &mut self.stale_gps_persistence {
+            stale_gps_persistence.reset();
         }
         if let Some(reject_confirmation) = &mut self.reject_confirmation {
             reject_confirmation.reset();
@@ -564,6 +657,29 @@ impl StatisticalMonitor {
             }
             None => None,
         };
+        let stale_gps_persistent_score =
+            self.stale_gps_persistence
+                .as_mut()
+                .map(|persistence_state| {
+                    let horizontal_position_std_m = sqrtf(
+                        predicted_state.covariance[(
+                            crate::ekf_core::state::POS_IDX,
+                            crate::ekf_core::state::POS_IDX,
+                        )]
+                            .max(
+                                predicted_state.covariance[(
+                                    crate::ekf_core::state::POS_IDX + 1,
+                                    crate::ekf_core::state::POS_IDX + 1,
+                                )],
+                            )
+                            .max(0.0),
+                    );
+                    persistence_state.update(
+                        predicted_state.nominal.position_ned_m,
+                        gps_observation.position_ned_m,
+                        horizontal_position_std_m,
+                    )
+                });
         let persistent_clock_reject =
             match (self.clock_bias_persistence, clock_bias_persistent_score) {
                 (Some(persistence_state), Some(score)) => {
@@ -607,14 +723,29 @@ impl StatisticalMonitor {
                 .map(|state| state.config.rejection_score_threshold),
             velocity_residual_persistent_score,
         );
+        let persistent_stale_gps_reject =
+            match (self.stale_gps_persistence, stale_gps_persistent_score) {
+                (Some(persistence_state), Some(score_m)) => {
+                    score_m >= persistence_state.config.rejection_score_threshold_m
+                }
+                _ => false,
+            };
+        let persistent_stale_gps_flag = persistence_warning_triggered(
+            self.persistence_warning,
+            self.stale_gps_persistence
+                .map(|state| state.config.rejection_score_threshold_m),
+            stale_gps_persistent_score,
+        );
         let raw_reject = persistent_clock_reject
             || persistent_horizontal_reject
             || persistent_velocity_reject
+            || persistent_stale_gps_reject
             || immediate_reject_triggered
             || accumulated_risk >= self.thresholds.rejected_risk_threshold;
         let raw_flag = persistent_clock_flag
             || persistent_horizontal_flag
             || persistent_velocity_flag
+            || persistent_stale_gps_flag
             || immediate_flag_triggered
             || accumulated_risk >= self.thresholds.flagged_risk_threshold;
         let trust_level = match &mut self.reject_confirmation {
@@ -631,6 +762,7 @@ impl StatisticalMonitor {
             clock_bias_persistent_score,
             horizontal_residual_persistent_score,
             velocity_residual_persistent_score,
+            stale_gps_persistent_score,
             accumulated_risk,
             innovation,
             barometer_residual_m,
@@ -838,8 +970,8 @@ mod tests {
 
     use super::{
         ClockBiasPersistenceConfig, EwmaRiskAccumulator, HorizontalResidualPersistenceConfig,
-        ImmediateTriggerConfig, PersistenceWarningConfig, StatisticalMonitor,
-        VelocityResidualPersistenceConfig,
+        ImmediateTriggerConfig, PersistenceWarningConfig, StaleGpsPersistenceConfig,
+        StatisticalMonitor, VelocityResidualPersistenceConfig,
     };
     use crate::{
         ekf_core::state::{EskfState, NominalState, StateCovariance},
@@ -1168,5 +1300,47 @@ mod tests {
         assert!(verdict.accumulated_risk < thresholds.rejected_risk_threshold);
         assert!(verdict.gps_squared_mahalanobis_distance >= 144.0);
         assert_eq!(verdict.trust_level, TrustLevel::Rejected);
+    }
+
+    #[test]
+    fn stale_gps_persistence_rejects_held_position_while_prediction_moves() {
+        let thresholds = ChiSquareThresholdConfig::new(1_000.0, 2_000.0);
+        let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(0.05))
+            .with_stale_gps_persistence(StaleGpsPersistenceConfig::new(0.02, 0.4, 5.0, 0.05, 2.0));
+
+        let mut last_verdict = TrustLevel::Trusted;
+        let mut last_stale_score = 0.0;
+        for step in 0..8 {
+            let predicted_state = EskfState::new(
+                NominalState {
+                    timestamp_s: step as f64,
+                    position_ned_m: Vector3::new(step as f32 * 0.6, 0.0, 0.0),
+                    velocity_ned_mps: Vector3::new(0.6, 0.0, 0.0),
+                    attitude_body_to_ned: UnitQuaternion::identity(),
+                    accel_bias_mps2: Vector3::zeros(),
+                    gyro_bias_rps: Vector3::zeros(),
+                    geodetic_reference: None,
+                },
+                StateCovariance::identity(),
+            );
+            let gps_observation = GpsObservation::from_accuracy_metrics(
+                step as f64,
+                Vector3::zeros(),
+                Vector3::zeros(),
+                50.0,
+                50.0,
+                50.0,
+                50.0,
+            );
+
+            let verdict = monitor
+                .evaluate_gps_observation(&predicted_state, &gps_observation)
+                .unwrap();
+            last_verdict = verdict.trust_level;
+            last_stale_score = verdict.stale_gps_persistent_score.unwrap_or(0.0);
+        }
+
+        assert!(last_stale_score >= 2.0);
+        assert_eq!(last_verdict, TrustLevel::Rejected);
     }
 }

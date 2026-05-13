@@ -15,6 +15,7 @@ The current decision paths are:
 - Optional clock-bias CUSUM when a clock-bias observation is available.
 - Horizontal position-residual CUSUM.
 - Horizontal velocity-residual CUSUM.
+- Stale-GPS persistence for held or frozen position fixes in replay.
 - Optional `Flagged` warning before confirmed `Rejected` output in the live path.
 
 ## ESKF Propagation
@@ -160,7 +161,24 @@ The CUSUM score is:
 score_v = max(0, score_v + n_v - slack_v)
 ```
 
-This path was added to catch profiles where spoofed position and velocity move together. In the measured PX4 sweep, zero-rejection cases improved from the stated hover/forward/climb baseline `56/54/56` to `47/53/50` while keeping nominal FPR at `0.000` for hover, forward, turn, and climb.
+This path was added to catch profiles where spoofed position and velocity move together. Later replay hardening, including pre-spoof residual calibration and stale-GPS persistence, reduced zero-rejection cases in the default four-mission sweep to `0 / 144` for hover, forward, turn, and climb while keeping nominal FPR at `0.000`.
+
+## Stale-GPS Persistence
+
+A frozen or hold-last-fix GPS stream may not produce a large instantaneous GPS residual if the vehicle is initially slow or near-stationary. The stale-GPS path compares the change in predicted ESKF position against the change in observed GPS position between successive GPS epochs:
+
+```text
+delta_pred = norm(p_hat,k - p_hat,k-1)
+delta_gps  = norm(p_gps,k - p_gps,k-1)
+```
+
+When the predicted state is confident enough, the predicted displacement is above a minimum motion threshold, and the observed GPS displacement is near-static, the score accumulates:
+
+```text
+score_stale = max(0, score_stale + delta_pred - delta_gps - slack_stale)
+```
+
+This path is deliberately gated by predicted position uncertainty so that it does not punish normal hover noise or early convergence. It improved the generated hold-last-fix profile from `0.000` rejected TPR to `0.705-0.788` across the four PX4 SIH replay datasets. That is generated-replay evidence only, not proof against real receiver stale-output behavior.
 
 ## Flag-Then-Confirm State Machine
 

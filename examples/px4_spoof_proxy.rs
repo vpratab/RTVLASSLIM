@@ -111,7 +111,7 @@ fn run() -> Result<(), String> {
                     MavMessage::GLOBAL_POSITION_INT(data)
                 };
 
-                if gps_frames_forwarded % 10 == 0 {
+                if gps_frames_forwarded.is_multiple_of(10) {
                     eprintln!(
                         "proxy progress: gps_forwarded={gps_frames_forwarded} spoofed={spoofed_gps_frames}"
                     );

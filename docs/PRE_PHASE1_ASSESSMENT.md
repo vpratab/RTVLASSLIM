@@ -32,8 +32,8 @@ The prototype has encouraging simulator and processed-dataset results, especiall
 | Live software MAVLink abrupt spoof | `bash scripts/wsl_px4_live_spoof.sh` | `13/2/15` trusted/flagged/rejected |
 | Live software MAVLink gradual spoof | `bash scripts/wsl_px4_gradual_spoof.sh` | `25/6/14` trusted/flagged/rejected |
 | Evidence verification | `cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin` | 30 packets verified, 13 trusted, 17 flagged/rejected, chain root `aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36` |
-| Host monitor profiling | `cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50` | 3000 monitor evaluations, `3796.6 eval/s`, mean/p95/max `262.62/273.27/388.00 us` on the local host |
-| Realistic spoof-profile suite | `cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover` | catches abrupt takeover at `1.000` rejected TPR and SDR-style 30 m / 10 s takeover at `0.858-0.867`; frozen GPS remains `0.000` |
+| Host monitor profiling | `cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50` | 3000 monitor evaluations, `3844.8 eval/s`, mean/p95/max `259.27/271.32/397.80 us` on the local host |
+| Realistic spoof-profile suite | `cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover` | abrupt takeover `1.000`, SDR-style 30 m / 10 s `0.894-0.914`, frozen GPS `0.705-0.788`, generated `ds7` `0.692-0.762` rejected TPR |
 
 ## Technical Maturity
 
@@ -88,7 +88,7 @@ Any table with external paper TPR/FPR numbers should include exact citations and
 | No raw IF / RF-layer coverage | high | high | pair RTVLAS-Slim with receiver/RF-layer monitoring; do not sell it as RF detection |
 | Target hardware performance unknown | medium | high | benchmark on representative ARM/PX4 companion hardware; current host profiling is not a substitute |
 | Threshold transfer across vehicles unknown | medium | high | calibrate per mission class; add adaptive threshold studies |
-| Slow carry-off and stale-GPS evasion remain in generated profiles | medium | high | expand adversarial sweep, add real external datasets, and investigate stale-solution detection without increasing nominal FPR |
+| Slow/subtle generated profiles remain partial | medium | high | keep expanding adversarial sweep, add real external datasets, and validate stale-solution detection on real receiver logs before claiming field coverage |
 | False alarms under real vibration/multipath unknown | medium | high | collect outdoor nominal logs across environments |
 | Signing key storage is mock/software-backed | medium | medium | define TPM/HSM/secure-element path before field demo |
 | Evidence chain root is not externally anchored | medium | medium | record chain roots outside the evidence file and add timestamping or Merkle anchoring if audit integrity becomes a primary claim |

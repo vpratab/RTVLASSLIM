@@ -82,21 +82,13 @@ impl Default for AuxiliaryObservationConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MavlinkSubscriberConfig {
     pub gps_noise_model: GpsNoiseModel,
     pub auxiliary_observation_config: AuxiliaryObservationConfig,
 }
 
-impl Default for MavlinkSubscriberConfig {
-    fn default() -> Self {
-        Self {
-            gps_noise_model: GpsNoiseModel::default(),
-            auxiliary_observation_config: AuxiliaryObservationConfig::default(),
-        }
-    }
-}
-
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum TelemetryUpdate {
     Imu {

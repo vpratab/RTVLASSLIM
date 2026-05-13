@@ -31,7 +31,8 @@ The goal is to separate:
 | Change | Acceptance criterion | Measured result | Decision |
 | --- | --- | --- | --- |
 | turn-regime false-positive fix | turn nominal anomaly FPR below `0.10`; hover/forward/climb stay `0.000` | hover/forward/turn/climb all measured `0.000` anomaly FPR | kept |
-| velocity residual persistence | reduce zero-rejection sweep cases from the stated hover/forward/climb baseline `56/54/56` without regressing nominal FPR or TEXBAT | hover `47`, forward `53`, climb `50`; TEXBAT remained `ds2 0.978/0.034`, `ds3 0.953/0.032`, `ds7 0.999/0.000` | kept |
+| velocity residual persistence | reduce zero-rejection sweep cases from the stated hover/forward/climb baseline `56/54/56` without regressing nominal FPR or TEXBAT | initial pass reduced gaps without nominal regression; later replay hardening now measures `0 / 144` zero-rejection cases on all four default SIH sweeps | kept |
+| stale-GPS replay detector and spoof-onset fix | improve generated hold-last-fix and subtle time-push profiles without raising nominal SIH FPR | frozen GPS moved from `0.000` to `0.705-0.788` rejected TPR; generated `ds7` moved from `0.417-0.425` to `0.692-0.762`; nominal remains `0.000` FPR | kept |
 | flag-early / confirm-to-reject state machine | abrupt live spoof shows warning before rejection; clean nominal runs keep `0` flags | abrupt live run `13/2/15`, first flag verdict `#14`, first rejection verdict `#16`; nominal replay `60/0/0` | kept |
 
 The implementation note is important: the turn false-positive fix was not shipped as a broad maneuver-aware gating claim. The measured culprit was uncalibrated auxiliary/warning behavior in the PX4 SIH path. Heading observations are now opt-in for that path, while persistence warning flags are opt-in for live operator output.
@@ -40,8 +41,8 @@ The implementation note is important: the turn false-positive fix was not shippe
 
 | Dataset | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| nominal replay | `60 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `286.77 us` | `332.60 us` | `2441.92 us` |
-| spoofed replay | `0 / 0 / 60` | `1.000` | `0.000` | `1.000` | `0.000` | `253.53 us` | `340.80 us` | `421.40 us` |
+| nominal replay | `60 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `263.92 us` | `274.80 us` | `474.80 us` |
+| spoofed replay | `0 / 0 / 60` | `1.000` | `0.000` | `1.000` | `0.000` | `264.80 us` | `287.60 us` | `305.20 us` |
 
 ### PX4 SIH Multi-Mission Nominal + Replay Sweep
 
@@ -49,10 +50,10 @@ Observed on `2026-05-13` using `scripts/wsl_px4_multi_mission_benchmark.sh 120`:
 
 | Mission | GPS path summary | Nominal verdicts | Nominal anomaly FPR | Nominal rejected FPR | Standard replayed spoof anomaly / rejected TPR | Worst-case rejected TPR in 144-case sweep | Zero-rejection sweep cases |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `hover` | x `[-0.26, 0.13]`, y `[-0.36, 0.23]`, z `[-6.04, 0.27]`, max speed `2.59 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.951 / 0.931` | `0.000` | `16 / 144` |
-| `forward` | x `[-0.02, 30.94]`, y `[-0.35, 0.27]`, z `[-6.17, 0.15]`, max speed `4.15 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.940` | `0.000` | `24 / 144` |
-| `turn` | x `[-13.00, 11.94]`, y `[-0.06, 24.66]`, z `[-6.10, 0.13]`, max speed `4.79 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.921` | `0.000` | `8 / 144` |
-| `climb` | x `[-0.02, 10.38]`, y `[-0.30, 0.26]`, z `[-19.97, 0.15]`, max speed `3.09 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.950 / 0.931` | `0.000` | `24 / 144` |
+| `hover` | x `[-0.26, 0.13]`, y `[-0.36, 0.23]`, z `[-6.04, 0.27]`, max speed `2.59 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.961 / 0.961` | `0.758` | `0 / 144` |
+| `forward` | x `[-0.02, 30.94]`, y `[-0.35, 0.27]`, z `[-6.17, 0.15]`, max speed `4.15 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.960 / 0.960` | `0.700` | `0 / 144` |
+| `turn` | x `[-13.00, 11.94]`, y `[-0.06, 24.66]`, z `[-6.10, 0.13]`, max speed `4.79 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.960 / 0.960` | `0.725` | `0 / 144` |
+| `climb` | x `[-0.02, 10.38]`, y `[-0.30, 0.26]`, z `[-19.97, 0.15]`, max speed `3.09 m/s` | `120 / 0 / 0` | `0.000` | `0.000` | `0.960 / 0.960` | `0.733` | `0 / 144` |
 
 Structured exports now available per mission:
 
@@ -65,7 +66,7 @@ Structured exports now available per mission:
 - `artifacts/sweeps/px4_climb_adversarial_sweep.csv`
 - `artifacts/sweeps/px4_climb_adversarial_sweep.json`
 
-The previous turn-regime blocker is now removed on this measured SIH profile: anomaly FPR went from `0.717` to `0.000`, against an acceptance target of below `0.10`. The fix was narrower than the original maneuver-gating hypothesis: heading observations remain implemented, but the PX4 SIH path no longer enables uncalibrated heading checks by default, and persistence warning flags are opt-in for live operator output. The structured sweep still shows broad zero-rejection slow-ramp space across all four mission datasets, so this is not a general robustness claim.
+The previous turn-regime blocker is now removed on this measured SIH profile: anomaly FPR went from `0.717` to `0.000`, against an acceptance target of below `0.10`. The fix was narrower than the original maneuver-gating hypothesis: heading observations remain implemented, but the PX4 SIH path no longer enables uncalibrated heading checks by default, and persistence warning flags are opt-in for live operator output. The current default structured sweep no longer has zero-rejection cases, but worst-case rejected TPR remains `0.700-0.758`, so this is still a simulator characterization rather than a general robustness claim.
 
 An optional extended adversarial sweep mode is now available through `--extended`. A local smoke run over hover data with two onset times and four ramp durations evaluated `384` cases, preserved nominal `120/0/0` verdicts, and exported CSV/JSON results. This mode adds diagonal, vertical, larger-magnitude, and slower-ramp cases for pre-hardware characterization; it is not part of the published four-mission acceptance table until all mission profiles are rerun in that mode.
 
@@ -76,14 +77,14 @@ Observed on `2026-05-13` using `examples/run_realistic_spoof_suite.rs` against t
 | Profile | Hover rejected TPR | Forward rejected TPR | Turn rejected TPR | Climb rejected TPR | Note |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `texbat_ds1_static_takeover` | `1.000` | `1.000` | `1.000` | `1.000` | caught immediately |
-| `texbat_ds2_overpowered_time_push` | `0.933` | `0.933` | `0.925` | `0.933` | strong generated time-push result |
-| `texbat_ds3_matched_power_slow_carryoff` | `0.742` | `0.725` | `0.733` | `0.733` | partially caught; still difficult |
-| `texbat_ds7_phase_aligned_time_push` | `0.425` | `0.417` | `0.417` | `0.425` | weak generated SIH result |
-| `uav_sdr_takeover_30m_10s` | `0.867` | `0.867` | `0.858` | `0.867` | strong software-defined-spoofer-style result |
-| `uav_freeze_or_hold_last_fix` | `0.000` | `0.000` | `0.000` | `0.000` | not caught in this replay setup |
-| `nav_wrong_turn_cross_track` | `0.867` | `0.867` | `0.858` | `0.867` | strong wrong-turn profile result |
-| `nav_overshoot_along_track` | `0.933` | `0.933` | `0.925` | `0.933` | strong route-overshoot result |
-| `intermittent_pulsed_carryoff` | `0.742` | `0.738` | `0.716` | `0.746` | partially caught |
+| `texbat_ds2_overpowered_time_push` | `0.876` | `0.875` | `0.876` | `0.875` | strong generated time-push result |
+| `texbat_ds3_matched_power_slow_carryoff` | `0.819` | `0.827` | `0.800` | `0.779` | partially caught; still difficult |
+| `texbat_ds7_phase_aligned_time_push` | `0.743` | `0.740` | `0.762` | `0.692` | improved but still weaker than processed TEXBAT |
+| `uav_sdr_takeover_30m_10s` | `0.905` | `0.894` | `0.914` | `0.913` | strong software-defined-spoofer-style result |
+| `uav_freeze_or_hold_last_fix` | `0.764` | `0.788` | `0.705` | `0.743` | partially caught by stale-GPS persistence in generated replay |
+| `nav_wrong_turn_cross_track` | `0.905` | `0.904` | `0.905` | `0.904` | strong wrong-turn profile result |
+| `nav_overshoot_along_track` | `0.943` | `0.933` | `0.933` | `0.942` | strong route-overshoot result |
+| `intermittent_pulsed_carryoff` | `0.782` | `0.736` | `0.768` | `0.741` | partially caught |
 
 All four nominal mission datasets stayed at `120 / 0 / 0` trusted/flagged/rejected under the same runner. The suite is generated from measured SIH logs and public attack categories; it is not a replacement for running the actual public UAV/RF datasets.
 
@@ -149,10 +150,10 @@ This mode exists because a naive live calibration against hover-noise alone was 
 
 | Scenario | Trusted / Flagged / Rejected | Anomaly TPR | Anomaly FPR | Rejected TPR | Rejected FPR | Mean latency | P95 latency | Max latency |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `182.27 us` | `200.50 us` | `286.50 us` |
-| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `178.57 us` | `186.50 us` | `249.80 us` |
-| `ds3` | `651 / 4 / 1441` | `0.953` | `0.032` | `0.953` | `0.025` | `181.04 us` | `191.70 us` | `308.40 us` |
-| `ds7` | `567 / 0 / 1608` | `0.999` | `0.000` | `0.999` | `0.000` | `180.42 us` | `189.10 us` | `339.80 us` |
+| `cleanStatic-baseline` | `2115 / 0 / 0` | n/a | `0.000` | n/a | `0.000` | `192.39 us` | `250.80 us` | `680.70 us` |
+| `ds2` | `566 / 13 / 1521` | `0.978` | `0.034` | `0.975` | `0.020` | `182.78 us` | `190.30 us` | `283.80 us` |
+| `ds3` | `651 / 4 / 1441` | `0.953` | `0.032` | `0.953` | `0.025` | `182.36 us` | `189.70 us` | `280.30 us` |
+| `ds7` | `567 / 0 / 1608` | `0.999` | `0.000` | `0.999` | `0.000` | `186.63 us` | `206.60 us` | `341.20 us` |
 
 ### TEXBAT Ablation Snapshot
 
@@ -221,9 +222,9 @@ Observed on `2026-05-13`:
 
 | Dataset | Rows x iterations | Throughput | Mean / p95 / max per iteration | Verdicts |
 | --- | ---: | ---: | ---: | ---: |
-| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3796.6 evaluations/s` | `262.62 / 273.27 / 388.00 us` | `60 / 0 / 0` |
+| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3844.8 evaluations/s` | `259.27 / 271.32 / 397.80 us` | `60 / 0 / 0` |
 
-The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `136` bytes, and `SignedEvidencePacket` at `208` bytes. This is host profiling only; target flight hardware remains unmeasured.
+The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `192` bytes, and `SignedEvidencePacket` at `208` bytes. This is host profiling only; target flight hardware remains unmeasured.
 
 ## Limitations
 
@@ -245,7 +246,7 @@ The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `Es
 - replay noise is now calibrated from the pre-spoof clean segment rather than relying only on fixed observation-noise assumptions
 - `ds3` and `ds7` improved materially after calibrating the horizontal residual CUSUM from the pre-spoof clean segment, but they are still processed-replay results rather than hardware or raw-IF results
 - the optional immediate trigger hooks are implemented, but they did not materially move the first-rejection point in the current live PX4 spoof profile when trialed locally
-- the new structured replay sweep shows that many slow position-plus-velocity carry-off cases still evade rejection even though the measured turn nominal false positives were removed in the current PX4 SIH configuration
+- the default structured replay sweep now avoids zero-rejection cases on the four measured SIH datasets, but the worst-case rejected TPR is still only `0.700-0.758`
 
 ## Failure Analysis Note
 
@@ -256,8 +257,9 @@ The current full profile addresses that by combining:
 - calibrated observation noise from the clean pre-spoof segment
 - clock-bias persistence
 - horizontal residual CUSUM with slack and threshold calibrated from the same clean segment
+- horizontal velocity persistence and stale-GPS persistence for generated replay profiles
 
-That change is why the current `ds3` full-profile result moved from `0.907 / 0.032` to `0.953 / 0.032` in anomaly TPR/FPR, while `ds7` moved from `0.705 / 0.000` to `0.999 / 0.000`.
+Those changes are why the current processed TEXBAT `ds3` full-profile result moved from `0.907 / 0.032` to `0.953 / 0.032` in anomaly TPR/FPR, while processed TEXBAT `ds7` moved from `0.705 / 0.000` to `0.999 / 0.000`. The generated PX4 SIH realistic spoof-profile suite remains weaker than processed TEXBAT on subtle `ds7`-style time-push.
 
 ## Reviewer Guidance
 

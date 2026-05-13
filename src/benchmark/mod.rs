@@ -17,7 +17,7 @@ use crate::{
     statistical_monitor::{
         monitor::{
             EwmaRiskAccumulator, HorizontalResidualPersistenceConfig, MonitorError,
-            StatisticalMonitor, VelocityResidualPersistenceConfig,
+            StaleGpsPersistenceConfig, StatisticalMonitor, VelocityResidualPersistenceConfig,
         },
         observation::{
             BarometerObservation, ChiSquareThresholdConfig, GpsObservation, HeadingObservation,
@@ -441,12 +441,20 @@ pub fn run_monitor_dataset_rows<I>(
 where
     I: IntoIterator<Item = MonitorDatasetRow>,
 {
+    let rows: Vec<MonitorDatasetRow> = rows.into_iter().collect();
+    let horizontal_residual_std_override_m = calibrated_pre_spoof_horizontal_residual_std_m(&rows);
     let mut monitor = StatisticalMonitor::new(thresholds, EwmaRiskAccumulator::new(ewma_alpha))
         .with_clock_bias_persistence(
             crate::statistical_monitor::monitor::ClockBiasPersistenceConfig::new(0.9, 20.0),
         )
         .with_horizontal_residual_persistence(HorizontalResidualPersistenceConfig::new(0.2, 30.0))
+        .with_stale_gps_persistence(StaleGpsPersistenceConfig::new(0.02, 0.35, 5.0, 0.05, 2.0))
         .with_velocity_residual_persistence(VelocityResidualPersistenceConfig::new(1.0, 25.0, 0.5));
+    if let Some(horizontal_residual_std_override_m) = horizontal_residual_std_override_m {
+        monitor.set_horizontal_residual_normalization_std_override_m(Some(
+            horizontal_residual_std_override_m,
+        ));
+    }
     let mut report = MonitorDatasetReport::default();
     let mut evaluation_latencies_us = Vec::new();
 
@@ -530,6 +538,38 @@ where
     }
 
     Ok(report)
+}
+
+fn calibrated_pre_spoof_horizontal_residual_std_m(rows: &[MonitorDatasetRow]) -> Option<f32> {
+    if !rows.iter().any(|row| row.label_spoofed) {
+        return None;
+    }
+
+    let clean_residuals: Vec<f32> = rows
+        .iter()
+        .take_while(|row| !row.label_spoofed)
+        .map(|row| {
+            let dx = row.gps_px_ned_m - row.state_px_ned_m;
+            let dy = row.gps_py_ned_m - row.state_py_ned_m;
+            (dx * dx + dy * dy).sqrt()
+        })
+        .collect();
+
+    if clean_residuals.len() < 3 {
+        return None;
+    }
+
+    let mean = clean_residuals.iter().sum::<f32>() / clean_residuals.len() as f32;
+    let variance = clean_residuals
+        .iter()
+        .map(|residual| {
+            let centered = residual - mean;
+            centered * centered
+        })
+        .sum::<f32>()
+        / (clean_residuals.len() - 1) as f32;
+
+    Some(variance.sqrt().max(1.0))
 }
 
 pub fn write_spoofed_monitor_dataset_file<P: AsRef<Path>, Q: AsRef<Path>>(

@@ -49,7 +49,7 @@ The important rule is that `state_*` must come from an independent inertial or t
 
 ## Current Honest Gaps
 
-- The generated hold-last-fix / frozen GPS profile is not caught in the current replay setup.
-- The generated subtle phase-aligned time-push profile is only partially caught in PX4 SIH replay, even though processed TEXBAT `ds7` remains strong.
+- The generated hold-last-fix / frozen GPS profile is now partially caught in PX4 SIH replay (`0.705-0.788` rejected TPR), but this has not been validated on real stale receiver outputs.
+- The generated subtle phase-aligned time-push profile is only partially caught in PX4 SIH replay (`0.692-0.762` rejected TPR), even though processed TEXBAT `ds7` remains strong.
 - Raw RF/IQ datasets are not integrated until a receiver-processing step produces navigation solutions.
 - None of these sources replace outdoor receiver logs or real flight testing.

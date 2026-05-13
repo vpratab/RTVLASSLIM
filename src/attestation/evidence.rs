@@ -562,6 +562,7 @@ mod tests {
             clock_bias_persistent_score: None,
             horizontal_residual_persistent_score: None,
             velocity_residual_persistent_score: None,
+            stale_gps_persistent_score: None,
             accumulated_risk: if matches!(trust_level, TrustLevel::Trusted) {
                 1.5
             } else {
@@ -588,7 +589,7 @@ mod tests {
             let mut buffer = [0_u8; 384];
             let encoded = postcard::to_slice(packet, &mut buffer).unwrap();
             output.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
-            output.extend_from_slice(&encoded);
+            output.extend_from_slice(encoded);
         }
         output
     }

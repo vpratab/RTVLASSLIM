@@ -336,6 +336,7 @@ pub fn write_worst_case_summary<W: Write>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn result_row_from_report(
     dataset_label: &str,
     scenario_label: &str,
