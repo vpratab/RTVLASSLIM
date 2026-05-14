@@ -336,6 +336,15 @@ pub struct MonitorDatasetReport {
     pub first_rejected_sample_index: Option<u64>,
     pub samples_from_onset_to_first_anomaly: Option<u64>,
     pub samples_from_onset_to_first_rejection: Option<u64>,
+    pub max_gps_squared_mahalanobis_distance: f32,
+    pub max_accumulated_risk: f32,
+    pub max_horizontal_position_residual_m: f32,
+    pub max_horizontal_velocity_residual_mps: f32,
+    pub max_abs_clock_bias_residual_m: f32,
+    pub max_clock_bias_persistent_score: f32,
+    pub max_horizontal_residual_persistent_score: f32,
+    pub max_velocity_residual_persistent_score: f32,
+    pub max_stale_gps_persistent_score: f32,
 }
 
 impl MonitorDatasetReport {
@@ -353,6 +362,46 @@ impl MonitorDatasetReport {
 
     pub fn rejected_false_positive_rate(&self) -> f64 {
         ratio(self.rejected_false_positives, self.clean_labeled_samples)
+    }
+
+    fn observe_diagnostics(
+        &mut self,
+        verdict: &crate::statistical_monitor::observation::MonitorVerdict,
+    ) {
+        self.max_gps_squared_mahalanobis_distance = self
+            .max_gps_squared_mahalanobis_distance
+            .max(verdict.gps_squared_mahalanobis_distance);
+        self.max_accumulated_risk = self.max_accumulated_risk.max(verdict.accumulated_risk);
+
+        let horizontal_position_residual_m = (verdict.innovation[0] * verdict.innovation[0]
+            + verdict.innovation[1] * verdict.innovation[1])
+            .sqrt();
+        self.max_horizontal_position_residual_m = self
+            .max_horizontal_position_residual_m
+            .max(horizontal_position_residual_m);
+
+        let horizontal_velocity_residual_mps = (verdict.innovation[3] * verdict.innovation[3]
+            + verdict.innovation[4] * verdict.innovation[4])
+            .sqrt();
+        self.max_horizontal_velocity_residual_mps = self
+            .max_horizontal_velocity_residual_mps
+            .max(horizontal_velocity_residual_mps);
+
+        self.max_abs_clock_bias_residual_m = self
+            .max_abs_clock_bias_residual_m
+            .max(verdict.clock_bias_residual_m.unwrap_or(0.0).abs());
+        self.max_clock_bias_persistent_score = self
+            .max_clock_bias_persistent_score
+            .max(verdict.clock_bias_persistent_score.unwrap_or(0.0));
+        self.max_horizontal_residual_persistent_score = self
+            .max_horizontal_residual_persistent_score
+            .max(verdict.horizontal_residual_persistent_score.unwrap_or(0.0));
+        self.max_velocity_residual_persistent_score = self
+            .max_velocity_residual_persistent_score
+            .max(verdict.velocity_residual_persistent_score.unwrap_or(0.0));
+        self.max_stale_gps_persistent_score = self
+            .max_stale_gps_persistent_score
+            .max(verdict.stale_gps_persistent_score.unwrap_or(0.0));
     }
 }
 
@@ -485,6 +534,7 @@ where
             TrustLevel::Flagged | TrustLevel::Rejected
         );
         let is_rejected = matches!(verdict.trust_level, TrustLevel::Rejected);
+        report.observe_diagnostics(&verdict);
 
         if row.label_spoofed {
             report.spoof_labeled_samples += 1;

@@ -18,7 +18,7 @@ This directory contains generated datasets, logs, benchmark outputs, sweep expor
 | `artifacts/px4_multi_mission_summary.csv` | `bash scripts/wsl_px4_multi_mission_benchmark.sh 120` | compact multi-mission summary |
 | `artifacts/wsl_px4_live_spoof_evidence.bin` | `bash scripts/wsl_px4_live_spoof.sh` | signed evidence stream from abrupt live software spoof |
 | `artifacts/wsl_px4_gradual_spoof_evidence.bin` | `bash scripts/wsl_px4_gradual_spoof.sh` | signed evidence stream from gradual live software spoof |
-| `artifacts/spoof_suites/` | `cargo run --example run_realistic_spoof_suite -- <dataset>` | generated realistic spoof-profile CSV/JSON summaries |
+| `artifacts/spoof_suites/` | `cargo run --example run_realistic_spoof_suite -- <dataset>` | generated realistic spoof-profile CSV/JSON summaries, including diagnostic maxima and dominant-signal fields |
 
 ## Sweep Artifacts
 
@@ -36,6 +36,8 @@ The current measured four-mission sweep exports are:
 | `artifacts/sweeps/px4_climb_adversarial_sweep.json` | climb mission sweep, structured JSON |
 
 Some older unprefixed sweep files are also present from earlier runs. The `px4_*` files above are the current four-mission set referenced by the README and benchmark summary.
+
+The current sweep CSV/JSON files include diagnostic `max_*` fields for residuals, EWMA risk, and persistence scores. These fields are intended for failure analysis, not as independent validation.
 
 ## Evidence Verification
 

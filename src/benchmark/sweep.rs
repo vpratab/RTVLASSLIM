@@ -99,6 +99,15 @@ pub struct SweepResultRow {
     pub mean_evaluation_latency_us: f64,
     pub p95_evaluation_latency_us: f64,
     pub max_evaluation_latency_us: f64,
+    pub max_gps_squared_mahalanobis_distance: f32,
+    pub max_accumulated_risk: f32,
+    pub max_horizontal_position_residual_m: f32,
+    pub max_horizontal_velocity_residual_mps: f32,
+    pub max_abs_clock_bias_residual_m: f32,
+    pub max_clock_bias_persistent_score: f32,
+    pub max_horizontal_residual_persistent_score: f32,
+    pub max_velocity_residual_persistent_score: f32,
+    pub max_stale_gps_persistent_score: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -321,7 +330,7 @@ pub fn write_worst_case_summary<W: Write>(
     {
         writeln!(
             writer,
-            "Worst-case rejected TPR: {:.3} for {} (direction={}, mode={}, onset={:.1}s, ramp={:.1}s, onset->reject={:?})",
+            "Worst-case rejected TPR: {:.3} for {} (direction={}, mode={}, onset={:.1}s, ramp={:.1}s, onset->reject={:?}, max_h={:.2}m, max_v={:.2}m/s, max_clock_score={:.2}, max_h_score={:.2}, max_v_score={:.2}, max_stale_score={:.2})",
             worst_case.rejected_tpr,
             worst_case.scenario_label,
             worst_case.direction_label,
@@ -329,6 +338,12 @@ pub fn write_worst_case_summary<W: Write>(
             worst_case.onset_time_s,
             worst_case.ramp_duration_s,
             worst_case.samples_from_onset_to_first_rejection,
+            worst_case.max_horizontal_position_residual_m,
+            worst_case.max_horizontal_velocity_residual_mps,
+            worst_case.max_clock_bias_persistent_score,
+            worst_case.max_horizontal_residual_persistent_score,
+            worst_case.max_velocity_residual_persistent_score,
+            worst_case.max_stale_gps_persistent_score,
         )
         .map_err(MonitorDatasetError::Io)?;
     }
@@ -379,6 +394,15 @@ fn result_row_from_report(
         mean_evaluation_latency_us: report.mean_evaluation_latency_us,
         p95_evaluation_latency_us: report.p95_evaluation_latency_us,
         max_evaluation_latency_us: report.max_evaluation_latency_us,
+        max_gps_squared_mahalanobis_distance: report.max_gps_squared_mahalanobis_distance,
+        max_accumulated_risk: report.max_accumulated_risk,
+        max_horizontal_position_residual_m: report.max_horizontal_position_residual_m,
+        max_horizontal_velocity_residual_mps: report.max_horizontal_velocity_residual_mps,
+        max_abs_clock_bias_residual_m: report.max_abs_clock_bias_residual_m,
+        max_clock_bias_persistent_score: report.max_clock_bias_persistent_score,
+        max_horizontal_residual_persistent_score: report.max_horizontal_residual_persistent_score,
+        max_velocity_residual_persistent_score: report.max_velocity_residual_persistent_score,
+        max_stale_gps_persistent_score: report.max_stale_gps_persistent_score,
     }
 }
 

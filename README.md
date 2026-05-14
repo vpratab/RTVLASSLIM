@@ -14,7 +14,7 @@ GPS spoofing matters because small autonomous aircraft often trust processed GPS
 | Measured validation | processed TEXBAT replay, PX4 SIH replay, PX4 SIH software MAVLink spoof proxy |
 | Not measured | outdoor receiver logs, real flight, raw IF replay, RF spoofing, target flight hardware CPU/memory |
 | Primary technical risk | processed-navigation monitoring cannot see RF-layer attacks that remain internally consistent through the receiver |
-| New pre-hardware tooling | signed evidence chain-root verification, host profiling, extended adversarial sweeps, realistic spoof-profile suite, stale-GPS replay detector, passive outdoor nominal-report workflow |
+| New pre-hardware tooling | signed evidence chain-root verification, host profiling, extended adversarial sweeps, realistic spoof-profile suite, failure-diagnostic replay exports, passive outdoor nominal-report workflow |
 | Next evidence needed | target-hardware profiling and outdoor GNSS/IMU nominal data |
 
 See [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) for the risk table and recommended pre-Phase 1 work plan.
@@ -76,7 +76,7 @@ Measured on `2026-05-13` across the four PX4 SIH mission datasets:
 | slow matched-power carry-off | `texbat_ds3_matched_power_slow_carryoff` | `0.779-0.827` | `0.779-0.827` | partially caught, still a hard case |
 | subtle phase-aligned time-push | `texbat_ds7_phase_aligned_time_push` | `0.692-0.762` | `0.692-0.762` | improved, but still weaker than processed TEXBAT |
 | SDR-style UAV takeover | `uav_sdr_takeover_30m_10s` | `0.894-0.914` | `0.894-0.914` | strong |
-| hold-last-fix / frozen GPS | `uav_freeze_or_hold_last_fix` | `0.705-0.788` | `0.705-0.788` | now partially caught in generated replay |
+| hold-last-fix / frozen GPS | `uav_freeze_or_hold_last_fix` | `0.705-0.788` | `0.705-0.788` | partially caught in generated replay; dominant measured signal is horizontal residual persistence |
 | wrong-turn cross-track spoof | `nav_wrong_turn_cross_track` | `0.904-0.905` | `0.904-0.905` | strong |
 | along-track route overshoot | `nav_overshoot_along_track` | `0.933-0.943` | `0.933-0.943` | strong |
 | intermittent carry-off | `intermittent_pulsed_carryoff` | `0.736-0.782` | `0.736-0.782` | partially caught |
@@ -199,6 +199,7 @@ For a step-by-step reproduction guide, see [docs/REPRODUCE.md](docs/REPRODUCE.md
 | [docs/FORENSICS.md](docs/FORENSICS.md) | signed evidence format and verification chain |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | what the detector does and does not cover |
 | [docs/BASELINES.md](docs/BASELINES.md) | baseline and ablation tables |
+| [docs/FAILURE_ANALYSIS.md](docs/FAILURE_ANALYSIS.md) | diagnostic exports and weakest generated spoof profiles |
 | [docs/REPRODUCE.md](docs/REPRODUCE.md) | full reproduction guide |
 | [docs/SPOOF_DATASETS.md](docs/SPOOF_DATASETS.md) | public spoof datasets and current integration status |
 | [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) | TRL, risks, and pre-Phase 1 work plan |

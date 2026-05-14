@@ -168,6 +168,7 @@ How to read the CSV:
 - `anomaly_tpr` counts `Flagged` or `Rejected` during spoof-labeled samples.
 - `rejected_tpr` counts only `Rejected` during spoof-labeled samples.
 - `samples_from_onset_to_first_rejection` is empty when a case never reaches rejection.
+- `max_*` diagnostic columns show the strongest residual, risk, or persistence signal seen during the replay.
 
 The default sweep is the measured four-mission table in the README. The `--extended` sweep adds diagonal, vertical, larger-magnitude, and slower-ramp cases for pre-hardware adversarial characterization. It is deliberately harsher and should not be read as a field result.
 
@@ -191,6 +192,8 @@ Expected current behavior:
 - Subtle generated phase-aligned time-push reaches about `0.692-0.762` rejected TPR, weaker than processed TEXBAT `ds7`.
 
 The command writes CSV and JSON under `artifacts/spoof_suites`.
+
+The realistic suite also writes `dominant_signal`, which is the strongest normalized risk or persistence path for that generated profile. See [FAILURE_ANALYSIS.md](FAILURE_ANALYSIS.md) before using this field in any proposal language.
 
 ## Host Monitor Profiling
 

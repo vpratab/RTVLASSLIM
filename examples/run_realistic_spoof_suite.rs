@@ -183,6 +183,16 @@ struct SpoofSuiteResultRow {
     mean_evaluation_latency_us: f64,
     p95_evaluation_latency_us: f64,
     max_evaluation_latency_us: f64,
+    max_gps_squared_mahalanobis_distance: f32,
+    max_accumulated_risk: f32,
+    max_horizontal_position_residual_m: f32,
+    max_horizontal_velocity_residual_mps: f32,
+    max_abs_clock_bias_residual_m: f32,
+    max_clock_bias_persistent_score: f32,
+    max_horizontal_residual_persistent_score: f32,
+    max_velocity_residual_persistent_score: f32,
+    max_stale_gps_persistent_score: f32,
+    dominant_signal: String,
 }
 
 impl SpoofSuiteResultRow {
@@ -213,8 +223,47 @@ impl SpoofSuiteResultRow {
             mean_evaluation_latency_us: report.mean_evaluation_latency_us,
             p95_evaluation_latency_us: report.p95_evaluation_latency_us,
             max_evaluation_latency_us: report.max_evaluation_latency_us,
+            max_gps_squared_mahalanobis_distance: report.max_gps_squared_mahalanobis_distance,
+            max_accumulated_risk: report.max_accumulated_risk,
+            max_horizontal_position_residual_m: report.max_horizontal_position_residual_m,
+            max_horizontal_velocity_residual_mps: report.max_horizontal_velocity_residual_mps,
+            max_abs_clock_bias_residual_m: report.max_abs_clock_bias_residual_m,
+            max_clock_bias_persistent_score: report.max_clock_bias_persistent_score,
+            max_horizontal_residual_persistent_score: report
+                .max_horizontal_residual_persistent_score,
+            max_velocity_residual_persistent_score: report.max_velocity_residual_persistent_score,
+            max_stale_gps_persistent_score: report.max_stale_gps_persistent_score,
+            dominant_signal: dominant_signal(&report),
         }
     }
+}
+
+fn dominant_signal(report: &rtvlas::benchmark::MonitorDatasetReport) -> String {
+    let signals = [
+        (
+            "clock_bias_persistence",
+            report.max_clock_bias_persistent_score / 20.0,
+        ),
+        (
+            "horizontal_position_persistence",
+            report.max_horizontal_residual_persistent_score / 30.0,
+        ),
+        (
+            "horizontal_velocity_persistence",
+            report.max_velocity_residual_persistent_score / 25.0,
+        ),
+        (
+            "stale_gps_persistence",
+            report.max_stale_gps_persistent_score / 2.0,
+        ),
+        ("ewma_risk", report.max_accumulated_risk / 22.458_f32),
+    ];
+
+    signals
+        .into_iter()
+        .max_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(label, _)| label.to_owned())
+        .unwrap_or_else(|| "none".to_owned())
 }
 
 fn write_results_csv(path: &PathBuf, rows: &[SpoofSuiteResultRow]) -> Result<(), String> {

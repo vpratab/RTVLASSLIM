@@ -161,7 +161,7 @@ The CUSUM score is:
 score_v = max(0, score_v + n_v - slack_v)
 ```
 
-This path was added to catch profiles where spoofed position and velocity move together. Later replay hardening, including pre-spoof residual calibration and stale-GPS persistence, reduced zero-rejection cases in the default four-mission sweep to `0 / 144` for hover, forward, turn, and climb while keeping nominal FPR at `0.000`.
+This path was added to catch profiles where spoofed position and velocity move together. Later replay hardening and pre-spoof residual calibration reduced zero-rejection cases in the default four-mission sweep to `0 / 144` for hover, forward, turn, and climb while keeping nominal FPR at `0.000`.
 
 ## Stale-GPS Persistence
 
@@ -178,7 +178,7 @@ When the predicted state is confident enough, the predicted displacement is abov
 score_stale = max(0, score_stale + delta_pred - delta_gps - slack_stale)
 ```
 
-This path is deliberately gated by predicted position uncertainty so that it does not punish normal hover noise or early convergence. It improved the generated hold-last-fix profile from `0.000` rejected TPR to `0.705-0.788` across the four PX4 SIH replay datasets. That is generated-replay evidence only, not proof against real receiver stale-output behavior.
+This path is deliberately gated by predicted position uncertainty so that it does not punish normal hover noise or early convergence. It is implemented and unit-tested, but the current generated hold-last-fix profile is dominated by horizontal residual persistence rather than the stale-fix score. Real receiver stale-output behavior remains unvalidated.
 
 ## Flag-Then-Confirm State Machine
 

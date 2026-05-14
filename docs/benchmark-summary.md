@@ -32,7 +32,7 @@ The goal is to separate:
 | --- | --- | --- | --- |
 | turn-regime false-positive fix | turn nominal anomaly FPR below `0.10`; hover/forward/climb stay `0.000` | hover/forward/turn/climb all measured `0.000` anomaly FPR | kept |
 | velocity residual persistence | reduce zero-rejection sweep cases from the stated hover/forward/climb baseline `56/54/56` without regressing nominal FPR or TEXBAT | initial pass reduced gaps without nominal regression; later replay hardening now measures `0 / 144` zero-rejection cases on all four default SIH sweeps | kept |
-| stale-GPS replay detector and spoof-onset fix | improve generated hold-last-fix and subtle time-push profiles without raising nominal SIH FPR | frozen GPS moved from `0.000` to `0.705-0.788` rejected TPR; generated `ds7` moved from `0.417-0.425` to `0.692-0.762`; nominal remains `0.000` FPR | kept |
+| generated-spoof onset fix and failure diagnostics | improve generated hold-last-fix and subtle time-push profiles without raising nominal SIH FPR, and export diagnostic maxima for weak cases | frozen GPS moved from `0.000` to `0.705-0.788` rejected TPR; generated `ds7` moved from `0.417-0.425` to `0.692-0.762`; nominal remains `0.000` FPR; exports now include max residuals and persistence scores | kept |
 | flag-early / confirm-to-reject state machine | abrupt live spoof shows warning before rejection; clean nominal runs keep `0` flags | abrupt live run `13/2/15`, first flag verdict `#14`, first rejection verdict `#16`; nominal replay `60/0/0` | kept |
 
 The implementation note is important: the turn false-positive fix was not shipped as a broad maneuver-aware gating claim. The measured culprit was uncalibrated auxiliary/warning behavior in the PX4 SIH path. Heading observations are now opt-in for that path, while persistence warning flags are opt-in for live operator output.
@@ -81,7 +81,7 @@ Observed on `2026-05-13` using `examples/run_realistic_spoof_suite.rs` against t
 | `texbat_ds3_matched_power_slow_carryoff` | `0.819` | `0.827` | `0.800` | `0.779` | partially caught; still difficult |
 | `texbat_ds7_phase_aligned_time_push` | `0.743` | `0.740` | `0.762` | `0.692` | improved but still weaker than processed TEXBAT |
 | `uav_sdr_takeover_30m_10s` | `0.905` | `0.894` | `0.914` | `0.913` | strong software-defined-spoofer-style result |
-| `uav_freeze_or_hold_last_fix` | `0.764` | `0.788` | `0.705` | `0.743` | partially caught by stale-GPS persistence in generated replay |
+| `uav_freeze_or_hold_last_fix` | `0.764` | `0.788` | `0.705` | `0.743` | partially caught; dominant measured signal is horizontal residual persistence, not stale-fix score |
 | `nav_wrong_turn_cross_track` | `0.905` | `0.904` | `0.905` | `0.904` | strong wrong-turn profile result |
 | `nav_overshoot_along_track` | `0.943` | `0.933` | `0.933` | `0.942` | strong route-overshoot result |
 | `intermittent_pulsed_carryoff` | `0.782` | `0.736` | `0.768` | `0.741` | partially caught |
@@ -257,7 +257,7 @@ The current full profile addresses that by combining:
 - calibrated observation noise from the clean pre-spoof segment
 - clock-bias persistence
 - horizontal residual CUSUM with slack and threshold calibrated from the same clean segment
-- horizontal velocity persistence and stale-GPS persistence for generated replay profiles
+- horizontal velocity persistence, stale-GPS persistence, and replay diagnostics for generated replay profiles
 
 Those changes are why the current processed TEXBAT `ds3` full-profile result moved from `0.907 / 0.032` to `0.953 / 0.032` in anomaly TPR/FPR, while processed TEXBAT `ds7` moved from `0.705 / 0.000` to `0.999 / 0.000`. The generated PX4 SIH realistic spoof-profile suite remains weaker than processed TEXBAT on subtle `ds7`-style time-push.
 

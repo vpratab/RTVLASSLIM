@@ -35,6 +35,7 @@ The prototype has encouraging simulator and processed-dataset results, especiall
 | Evidence verification | `cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin` | 30 packets verified, 13 trusted, 17 flagged/rejected, chain root `aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36` |
 | Host monitor profiling | `cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50 --json-output artifacts/px4_monitor_profile_report.json --acceptance-p95-us 10000 --acceptance-max-us 50000` | 3000 monitor evaluations, `3850.1 eval/s`, mean/p95/max `258.98/269.86/1003.50 us` on the local host, accepted under the configured host timing gate |
 | Realistic spoof-profile suite | `cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover` | abrupt takeover `1.000`, SDR-style 30 m / 10 s `0.894-0.914`, frozen GPS `0.705-0.788`, generated `ds7` `0.692-0.762` rejected TPR |
+| Failure diagnostics | `cargo run --example run_adversarial_sweep ...` and `cargo run --example run_realistic_spoof_suite ...` | CSV/JSON exports now include max residual, risk, and persistence fields; see `docs/FAILURE_ANALYSIS.md` |
 
 ## Technical Maturity
 
