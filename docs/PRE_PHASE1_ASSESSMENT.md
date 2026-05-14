@@ -29,6 +29,7 @@ The prototype has encouraging simulator and processed-dataset results, especiall
 | Simple baselines | `cargo run --example run_texbat_baselines` | Full detector outperforms naive distance and innovation-only baselines on measured scenarios |
 | PX4 SIH replay | `bash scripts/wsl_px4_benchmark.sh 60` | nominal `60/0/0`, spoofed `0/0/60` |
 | PX4 SIH multi-mission | `bash scripts/wsl_px4_multi_mission_benchmark.sh 120` | hover/forward/turn/climb nominal anomaly FPR `0.000` |
+| Outdoor/passive nominal workflow | `cargo run --example capture_monitor_dataset -- --mission-profile passive ...` then `cargo run --example report_nominal_dataset -- ...` | tooling implemented; no outdoor dataset has been collected in this repository |
 | Live software MAVLink abrupt spoof | `bash scripts/wsl_px4_live_spoof.sh` | `13/2/15` trusted/flagged/rejected |
 | Live software MAVLink gradual spoof | `bash scripts/wsl_px4_gradual_spoof.sh` | `25/6/14` trusted/flagged/rejected |
 | Evidence verification | `cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin` | 30 packets verified, 13 trusted, 17 flagged/rejected, chain root `aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36` |
@@ -42,6 +43,7 @@ The prototype has encouraging simulator and processed-dataset results, especiall
 | Algorithm implementation | ESKF propagation, Mahalanobis innovation monitor, EWMA, clock/position/velocity CUSUM, live flag-confirm state machine | implemented prototype |
 | Replay validation | processed TEXBAT and CSV/PX4 replay paths | controlled benchmark evidence |
 | Simulator validation | PX4 SIH hover/forward/turn/climb and live software spoof proxy | controlled bench evidence |
+| Outdoor nominal tooling | passive MAVLink capture and nominal FPR JSON report | implemented but not yet populated with real data |
 | Hardware validation | none in repository | not TRL 5 |
 | RF validation | none in repository | not RF anti-spoofing |
 | Embedded deployment | `no-default-features` check passes, but target hardware CPU/memory not measured | embedded feasibility only partially supported |
@@ -99,7 +101,7 @@ Any table with external paper TPR/FPR numbers should include exact citations and
 The highest-value next experiments are:
 
 1. Target-hardware profiling: run the detector and evidence signing on a representative ARM/Linux companion computer or PX4-class hardware; report CPU, memory, mean latency, p95 latency, and worst-case latency.
-2. Outdoor nominal data: collect at least 30 minutes of GPS/IMU/barometer logs from a real receiver without spoofing; measure false positives.
+2. Outdoor nominal data: use `capture_monitor_dataset --mission-profile passive` to collect at least 30 minutes of GPS/IMU/barometer logs from a real receiver without spoofing, then run `report_nominal_dataset` to measure false positives.
 3. Hardware-in-the-loop replay: replay measured telemetry through the MAVLink adapter at real rates and compare against CSV replay results.
 4. Dynamic trajectory expansion: add aggressive turn, climb/descent, wind, vibration, and weak-GPS simulator profiles before claiming general flight-regime robustness.
 5. Raw IF feasibility study: process raw TEXBAT or equivalent IF data through GNSS-SDR to understand what RTVLAS-Slim misses at the receiver layer.

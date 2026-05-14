@@ -94,6 +94,22 @@ Spoofed dataset: artifacts/px4_monitor_dataset_spoofed.csv
 
 If PX4 fails to start, check that `external/PX4-Autopilot/build/px4_sitl_sih/bin/px4` exists and that no old PX4 process is still bound to the expected UDP ports.
 
+## Outdoor Nominal Logging Workflow
+
+The repository now includes a passive capture path for real receiver or outdoor MAVLink logs. It does not arm a vehicle, does not request offboard mode, and does not send mission setpoints when `--mission-profile passive` is used:
+
+```powershell
+cargo run --example capture_monitor_dataset -- --connection udpout:127.0.0.1:14550 --mission-profile passive --samples 1800 --output artifacts/outdoor_nominal_dataset.csv
+```
+
+After capture, generate a nominal false-positive report:
+
+```powershell
+cargo run --example report_nominal_dataset -- artifacts/outdoor_nominal_dataset.csv --json-output artifacts/outdoor_nominal_report.json --acceptance-fpr 0.01
+```
+
+The report prints trusted/flagged/rejected counts, anomaly and rejected FPR, horizontal residual statistics, velocity residual statistics, and monitor latency. It exits with failure if the dataset contains spoof-labeled rows or if FPR exceeds the configured threshold. This workflow is intended for outdoor nominal evidence; it is not a spoofing or RF-layer validation by itself.
+
 ## PX4 SIH Multi-Mission Benchmark
 
 Run:

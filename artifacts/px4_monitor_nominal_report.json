@@ -1,0 +1,26 @@
+{
+  "dataset_path": "artifacts/px4_monitor_dataset.csv",
+  "samples": 60,
+  "duration_s": 9.895999999999999,
+  "spoof_labeled_rows": 0,
+  "trusted_verdicts": 60,
+  "flagged_verdicts": 0,
+  "rejected_verdicts": 0,
+  "anomaly_false_positive_rate": 0.0,
+  "rejected_false_positive_rate": 0.0,
+  "mean_evaluation_latency_us": 277.325,
+  "p95_evaluation_latency_us": 310.1,
+  "max_evaluation_latency_us": 454.8,
+  "horizontal_residual_m": {
+    "mean": 2.9570665,
+    "p95": 11.409689,
+    "max": 14.977497
+  },
+  "horizontal_velocity_residual_mps": {
+    "mean": 1.5079266,
+    "p95": 5.0950685,
+    "max": 6.3453913
+  },
+  "acceptance_threshold_fpr": 0.01,
+  "accepted": true
+}

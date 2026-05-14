@@ -14,7 +14,7 @@ GPS spoofing matters because small autonomous aircraft often trust processed GPS
 | Measured validation | processed TEXBAT replay, PX4 SIH replay, PX4 SIH software MAVLink spoof proxy |
 | Not measured | outdoor receiver logs, real flight, raw IF replay, RF spoofing, target flight hardware CPU/memory |
 | Primary technical risk | processed-navigation monitoring cannot see RF-layer attacks that remain internally consistent through the receiver |
-| New pre-hardware tooling | signed evidence chain-root verification, host profiling, extended adversarial sweeps, realistic spoof-profile suite, stale-GPS replay detector |
+| New pre-hardware tooling | signed evidence chain-root verification, host profiling, extended adversarial sweeps, realistic spoof-profile suite, stale-GPS replay detector, passive outdoor nominal-report workflow |
 | Next evidence needed | target-hardware profiling and outdoor GNSS/IMU nominal data |
 
 See [docs/PRE_PHASE1_ASSESSMENT.md](docs/PRE_PHASE1_ASSESSMENT.md) for the risk table and recommended pre-Phase 1 work plan.
@@ -157,6 +157,7 @@ Pre-hardware characterization utilities:
 
 ```powershell
 cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+cargo run --example report_nominal_dataset -- artifacts/px4_monitor_dataset.csv --json-output artifacts/px4_monitor_nominal_report.json
 cargo run --example run_adversarial_sweep -- artifacts/px4_hover_dataset.csv --dataset-label hover_extended --output-dir artifacts/sweeps --extended --onsets 2.0,4.0 --ramps 0.0,5.0,20.0,40.0
 cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover
 ```

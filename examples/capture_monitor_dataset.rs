@@ -68,18 +68,25 @@ fn run() -> Result<(), String> {
     let mut writer = csv::Writer::from_writer(file);
     let mut subscriber = subscriber;
     let mut captured_samples = 0_usize;
-    let mut mission_controller = MissionController::new(mission_profile);
+    let mut mission_controller = mission_profile.map(MissionController::new);
     let mut capture_summary = CaptureSummary::default();
 
     println!("Capturing {samples} synchronized samples from {connection}");
-    println!("Mission profile: {}", mission_profile.label());
+    println!(
+        "Mission profile: {}",
+        mission_profile
+            .map(MissionProfile::label)
+            .unwrap_or("passive")
+    );
     println!("Writing dataset to {}", output_path.display());
     let _ = std::io::stdout().flush();
 
     while captured_samples < samples {
-        mission_controller
-            .tick(&subscriber)
-            .map_err(|error| error.to_string())?;
+        if let Some(mission_controller) = &mut mission_controller {
+            mission_controller
+                .tick(&subscriber)
+                .map_err(|error| error.to_string())?;
+        }
 
         match subscriber
             .try_recv_next()
@@ -145,14 +152,15 @@ enum MissionProfile {
 }
 
 impl MissionProfile {
-    fn parse(value: &str) -> Result<Self, String> {
+    fn parse(value: &str) -> Result<Option<Self>, String> {
         match value {
-            "hover" => Ok(Self::Hover),
-            "forward" => Ok(Self::Forward),
-            "turn" => Ok(Self::Turn),
-            "climb" => Ok(Self::Climb),
+            "passive" | "none" => Ok(None),
+            "hover" => Ok(Some(Self::Hover)),
+            "forward" => Ok(Some(Self::Forward)),
+            "turn" => Ok(Some(Self::Turn)),
+            "climb" => Ok(Some(Self::Climb)),
             other => Err(format!(
-                "unsupported mission profile '{other}', expected hover|forward|turn|climb"
+                "unsupported mission profile '{other}', expected passive|hover|forward|turn|climb"
             )),
         }
     }

@@ -9,6 +9,7 @@ This directory contains generated datasets, logs, benchmark outputs, sweep expor
 | `artifacts/texbat/` | `.\scripts\download_texbat_processed.ps1` | processed TEXBAT `navsol.mat` inputs and replay CSV outputs |
 | `artifacts/px4_monitor_dataset.csv` | `bash scripts/wsl_px4_benchmark.sh 60` | 60-sample nominal PX4 SIH replay dataset |
 | `artifacts/px4_monitor_dataset_spoofed.csv` | `bash scripts/wsl_px4_benchmark.sh 60` | software-injected spoof replay dataset |
+| `artifacts/px4_monitor_nominal_report.json` | `cargo run --example report_nominal_dataset -- artifacts/px4_monitor_dataset.csv --json-output artifacts/px4_monitor_nominal_report.json` | JSON false-positive and residual report for the nominal PX4 SIH replay dataset |
 | `artifacts/px4_hover_dataset.csv` | `bash scripts/wsl_px4_multi_mission_benchmark.sh 120` | hover mission nominal dataset |
 | `artifacts/px4_forward_dataset.csv` | `bash scripts/wsl_px4_multi_mission_benchmark.sh 120` | forward mission nominal dataset |
 | `artifacts/px4_turn_dataset.csv` | `bash scripts/wsl_px4_multi_mission_benchmark.sh 120` | turn mission nominal dataset |
