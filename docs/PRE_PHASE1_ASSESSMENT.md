@@ -33,7 +33,7 @@ The prototype has encouraging simulator and processed-dataset results, especiall
 | Live software MAVLink abrupt spoof | `bash scripts/wsl_px4_live_spoof.sh` | `13/2/15` trusted/flagged/rejected |
 | Live software MAVLink gradual spoof | `bash scripts/wsl_px4_gradual_spoof.sh` | `25/6/14` trusted/flagged/rejected |
 | Evidence verification | `cargo run --example verify_evidence artifacts/wsl_px4_live_spoof_evidence.bin` | 30 packets verified, 13 trusted, 17 flagged/rejected, chain root `aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36` |
-| Host monitor profiling | `cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50` | 3000 monitor evaluations, `3844.8 eval/s`, mean/p95/max `259.27/271.32/397.80 us` on the local host |
+| Host monitor profiling | `cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50 --json-output artifacts/px4_monitor_profile_report.json --acceptance-p95-us 10000 --acceptance-max-us 50000` | 3000 monitor evaluations, `3850.1 eval/s`, mean/p95/max `258.98/269.86/1003.50 us` on the local host, accepted under the configured host timing gate |
 | Realistic spoof-profile suite | `cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover` | abrupt takeover `1.000`, SDR-style 30 m / 10 s `0.894-0.914`, frozen GPS `0.705-0.788`, generated `ds7` `0.692-0.762` rejected TPR |
 
 ## Technical Maturity
@@ -100,7 +100,7 @@ Any table with external paper TPR/FPR numbers should include exact citations and
 
 The highest-value next experiments are:
 
-1. Target-hardware profiling: run the detector and evidence signing on a representative ARM/Linux companion computer or PX4-class hardware; report CPU, memory, mean latency, p95 latency, and worst-case latency.
+1. Target-hardware profiling: run `profile_monitor_dataset` with JSON output on a representative ARM/Linux companion computer or PX4-class hardware; report CPU class, memory, mean latency, p95 latency, and worst-case latency.
 2. Outdoor nominal data: use `capture_monitor_dataset --mission-profile passive` to collect at least 30 minutes of GPS/IMU/barometer logs from a real receiver without spoofing, then run `report_nominal_dataset` to measure false positives.
 3. Hardware-in-the-loop replay: replay measured telemetry through the MAVLink adapter at real rates and compare against CSV replay results.
 4. Dynamic trajectory expansion: add aggressive turn, climb/descent, wind, vibration, and weak-GPS simulator profiles before claiming general flight-regime robustness.

@@ -215,16 +215,16 @@ The verifier computes this root over the signed framed packet sequence. It is a 
 The replay monitor can be profiled without PX4 using:
 
 ```powershell
-cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50 --json-output artifacts/px4_monitor_profile_report.json --acceptance-p95-us 10000 --acceptance-max-us 50000
 ```
 
 Observed on `2026-05-13`:
 
 | Dataset | Rows x iterations | Throughput | Mean / p95 / max per iteration | Verdicts |
 | --- | ---: | ---: | ---: | ---: |
-| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3844.8 evaluations/s` | `259.27 / 271.32 / 397.80 us` | `60 / 0 / 0` |
+| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3850.1 evaluations/s` | `258.98 / 269.86 / 1003.50 us` | `60 / 0 / 0` |
 
-The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `192` bytes, and `SignedEvidencePacket` at `208` bytes. This is host profiling only; target flight hardware remains unmeasured.
+The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `192` bytes, and `SignedEvidencePacket` at `208` bytes. The run writes `artifacts/px4_monitor_profile_report.json` and passed the configured host acceptance gate. This is host profiling only; target flight hardware remains unmeasured.
 
 ## Limitations
 

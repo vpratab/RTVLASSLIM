@@ -156,7 +156,7 @@ bash scripts/wsl_px4_gradual_spoof.sh
 Pre-hardware characterization utilities:
 
 ```powershell
-cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50 --json-output artifacts/px4_monitor_profile_report.json --acceptance-p95-us 10000 --acceptance-max-us 50000
 cargo run --example report_nominal_dataset -- artifacts/px4_monitor_dataset.csv --json-output artifacts/px4_monitor_nominal_report.json
 cargo run --example run_adversarial_sweep -- artifacts/px4_hover_dataset.csv --dataset-label hover_extended --output-dir artifacts/sweeps --extended --onsets 2.0,4.0 --ramps 0.0,5.0,20.0,40.0
 cargo run --example run_realistic_spoof_suite -- artifacts/px4_hover_dataset.csv --dataset-label px4_hover

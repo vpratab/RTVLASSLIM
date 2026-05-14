@@ -197,19 +197,20 @@ The command writes CSV and JSON under `artifacts/spoof_suites`.
 Run:
 
 ```powershell
-cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50
+cargo run --example profile_monitor_dataset -- artifacts/px4_monitor_dataset.csv --iterations 50 --json-output artifacts/px4_monitor_profile_report.json --acceptance-p95-us 10000 --acceptance-max-us 50000
 ```
 
 Observed local output:
 
 ```text
 Total monitor evaluations: 3000
-Throughput: 3844.8 evaluations/s
-Latency mean/p95/max per iteration (us): 259.27/271.32/397.80
+Throughput: 3850.1 evaluations/s
+Latency mean/p95/max per iteration (us): 258.98/269.86/1003.50
 Final verdict counts: 60/0/0 trusted/flagged/rejected
+Accepted: true
 ```
 
-This profiles the Rust replay path on the development host. It does not establish target flight-controller CPU load or worst-case execution time.
+This profiles the Rust replay path on the development host and writes a structured JSON report. Running the same command on a representative companion computer or flight-controller-class Linux target is the intended next step. This still does not establish certified worst-case execution time under an autopilot scheduler.
 
 ## Live PX4 Software Spoof Proxy
 
