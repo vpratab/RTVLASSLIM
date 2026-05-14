@@ -207,8 +207,8 @@ Observed local output:
 
 ```text
 Total monitor evaluations: 3000
-Throughput: 3850.1 evaluations/s
-Latency mean/p95/max per iteration (us): 258.98/269.86/1003.50
+Throughput: 3912.4 evaluations/s
+Latency mean/p95/max per iteration (us): 254.53/264.02/438.70
 Final verdict counts: 60/0/0 trusted/flagged/rejected
 Accepted: true
 ```
@@ -258,6 +258,7 @@ Evidence file: artifacts/wsl_px4_live_spoof_evidence.bin
   packets verified: 30
   trusted verdicts: 13
   flagged/rejected verdicts: 17
+  diagnostic packets: 0
   first timestamp (ns): 3796000000
   last timestamp (ns): 6700000000
   evidence chain root: aee3dce6be23e5ed8ff0674decc34769cab1579e06db539ac265257eb341db36

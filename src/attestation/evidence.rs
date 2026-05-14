@@ -10,7 +10,8 @@ use crate::{
 };
 
 pub const STATE_SNAPSHOT_LEN: usize = 16;
-const MAX_EVIDENCE_PACKET_BYTES: usize = 256;
+pub const INNOVATION_SNAPSHOT_LEN: usize = 6;
+const MAX_EVIDENCE_PACKET_BYTES: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EvidencePacket {
@@ -18,6 +19,55 @@ pub struct EvidencePacket {
     pub telemetry_hash: [u8; 32],
     pub physics_verdict: bool,
     pub state_snapshot: [f32; STATE_SNAPSHOT_LEN],
+    #[serde(default, skip_serializing_if = "EvidenceDiagnostics::is_empty")]
+    pub diagnostics: EvidenceDiagnostics,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceDiagnostics {
+    pub trust_level_code: u8,
+    pub squared_mahalanobis_distance: f32,
+    pub gps_squared_mahalanobis_distance: f32,
+    pub accumulated_risk: f32,
+    pub innovation: [f32; INNOVATION_SNAPSHOT_LEN],
+    pub barometer_residual_m: Option<f32>,
+    pub heading_residual_rad: Option<f32>,
+    pub clock_bias_residual_m: Option<f32>,
+    pub clock_bias_persistent_score: Option<f32>,
+    pub horizontal_residual_persistent_score: Option<f32>,
+    pub velocity_residual_persistent_score: Option<f32>,
+    pub stale_gps_persistent_score: Option<f32>,
+}
+
+impl EvidenceDiagnostics {
+    pub fn from_monitor_verdict(monitor_verdict: &MonitorVerdict) -> Self {
+        Self {
+            trust_level_code: trust_level_code(monitor_verdict.trust_level),
+            squared_mahalanobis_distance: monitor_verdict.squared_mahalanobis_distance,
+            gps_squared_mahalanobis_distance: monitor_verdict.gps_squared_mahalanobis_distance,
+            accumulated_risk: monitor_verdict.accumulated_risk,
+            innovation: [
+                monitor_verdict.innovation[0],
+                monitor_verdict.innovation[1],
+                monitor_verdict.innovation[2],
+                monitor_verdict.innovation[3],
+                monitor_verdict.innovation[4],
+                monitor_verdict.innovation[5],
+            ],
+            barometer_residual_m: monitor_verdict.barometer_residual_m,
+            heading_residual_rad: monitor_verdict.heading_residual_rad,
+            clock_bias_residual_m: monitor_verdict.clock_bias_residual_m,
+            clock_bias_persistent_score: monitor_verdict.clock_bias_persistent_score,
+            horizontal_residual_persistent_score: monitor_verdict
+                .horizontal_residual_persistent_score,
+            velocity_residual_persistent_score: monitor_verdict.velocity_residual_persistent_score,
+            stale_gps_persistent_score: monitor_verdict.stale_gps_persistent_score,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 impl EvidencePacket {
@@ -32,6 +82,7 @@ impl EvidencePacket {
             telemetry_hash: sha256_digest(raw_mavlink_message),
             physics_verdict: matches!(monitor_verdict.trust_level, TrustLevel::Trusted),
             state_snapshot: nominal_state_snapshot(predicted_state),
+            diagnostics: EvidenceDiagnostics::from_monitor_verdict(monitor_verdict),
         }
     }
 
@@ -60,11 +111,16 @@ pub struct SignedEvidencePacket {
 }
 
 #[cfg(feature = "std")]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FramedEvidenceSummary {
     pub total_packets: u64,
     pub trusted_verdicts: u64,
     pub flagged_or_rejected_verdicts: u64,
+    pub diagnostic_packets: u64,
+    pub max_gps_squared_mahalanobis_distance: f32,
+    pub max_accumulated_risk: f32,
+    pub max_horizontal_position_residual_m: f32,
+    pub max_horizontal_velocity_residual_mps: f32,
     pub first_timestamp_ns: Option<u64>,
     pub last_timestamp_ns: Option<u64>,
     pub evidence_chain_root: [u8; 32],
@@ -178,8 +234,11 @@ impl fmt::Display for AttestationError {
 
 pub fn verify_evidence(signed_evidence: &SignedEvidencePacket) -> Result<(), AttestationError> {
     let mut serialization_buffer = [0_u8; MAX_EVIDENCE_PACKET_BYTES];
-    let serialized_packet =
-        serialize_evidence(&signed_evidence.evidence, &mut serialization_buffer)?;
+    let serialized_packet = if signed_evidence.evidence.diagnostics.is_empty() {
+        serialize_legacy_evidence(&signed_evidence.evidence, &mut serialization_buffer)?
+    } else {
+        serialize_evidence(&signed_evidence.evidence, &mut serialization_buffer)?
+    };
 
     let verifying_key = VerifyingKey::from_bytes(&signed_evidence.public_key)
         .map_err(|_| AttestationError::InvalidVerifyingKey)?;
@@ -200,7 +259,12 @@ pub fn serialize_evidence<'a>(
 }
 
 pub fn deserialize_evidence(bytes: &[u8]) -> Result<SignedEvidencePacket, AttestationError> {
-    postcard::from_bytes(bytes).map_err(AttestationError::Serialization)
+    postcard::from_bytes(bytes)
+        .or_else(|_| {
+            postcard::from_bytes::<LegacySignedEvidencePacket>(bytes)
+                .map(SignedEvidencePacket::from)
+        })
+        .map_err(AttestationError::Serialization)
 }
 
 #[cfg(feature = "std")]
@@ -288,6 +352,31 @@ pub fn verify_framed_evidence_bytes(
             summary.trusted_verdicts += 1;
         } else {
             summary.flagged_or_rejected_verdicts += 1;
+        }
+        if !packet.evidence.diagnostics.is_empty() {
+            summary.diagnostic_packets += 1;
+            summary.max_gps_squared_mahalanobis_distance = summary
+                .max_gps_squared_mahalanobis_distance
+                .max(packet.evidence.diagnostics.gps_squared_mahalanobis_distance);
+            summary.max_accumulated_risk = summary
+                .max_accumulated_risk
+                .max(packet.evidence.diagnostics.accumulated_risk);
+            let horizontal_position_residual_m = (packet.evidence.diagnostics.innovation[0]
+                * packet.evidence.diagnostics.innovation[0]
+                + packet.evidence.diagnostics.innovation[1]
+                    * packet.evidence.diagnostics.innovation[1])
+                .sqrt();
+            let horizontal_velocity_residual_mps = (packet.evidence.diagnostics.innovation[3]
+                * packet.evidence.diagnostics.innovation[3]
+                + packet.evidence.diagnostics.innovation[4]
+                    * packet.evidence.diagnostics.innovation[4])
+                .sqrt();
+            summary.max_horizontal_position_residual_m = summary
+                .max_horizontal_position_residual_m
+                .max(horizontal_position_residual_m);
+            summary.max_horizontal_velocity_residual_mps = summary
+                .max_horizontal_velocity_residual_mps
+                .max(horizontal_velocity_residual_mps);
         }
 
         summary.first_timestamp_ns = Some(
@@ -391,6 +480,72 @@ fn nominal_state_snapshot(state: &EskfState) -> [f32; STATE_SNAPSHOT_LEN] {
     ]
 }
 
+fn trust_level_code(trust_level: TrustLevel) -> u8 {
+    match trust_level {
+        TrustLevel::Trusted => 0,
+        TrustLevel::Flagged => 1,
+        TrustLevel::Rejected => 2,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct LegacyEvidencePacket {
+    timestamp_ns: u64,
+    telemetry_hash: [u8; 32],
+    physics_verdict: bool,
+    state_snapshot: [f32; STATE_SNAPSHOT_LEN],
+}
+
+impl From<&EvidencePacket> for LegacyEvidencePacket {
+    fn from(evidence: &EvidencePacket) -> Self {
+        Self {
+            timestamp_ns: evidence.timestamp_ns,
+            telemetry_hash: evidence.telemetry_hash,
+            physics_verdict: evidence.physics_verdict,
+            state_snapshot: evidence.state_snapshot,
+        }
+    }
+}
+
+impl From<LegacyEvidencePacket> for EvidencePacket {
+    fn from(evidence: LegacyEvidencePacket) -> Self {
+        Self {
+            timestamp_ns: evidence.timestamp_ns,
+            telemetry_hash: evidence.telemetry_hash,
+            physics_verdict: evidence.physics_verdict,
+            state_snapshot: evidence.state_snapshot,
+            diagnostics: EvidenceDiagnostics::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct LegacySignedEvidencePacket {
+    evidence: LegacyEvidencePacket,
+    #[serde(with = "signature_bytes_serde")]
+    signature: [u8; 64],
+    public_key: [u8; 32],
+}
+
+impl From<LegacySignedEvidencePacket> for SignedEvidencePacket {
+    fn from(packet: LegacySignedEvidencePacket) -> Self {
+        Self {
+            evidence: packet.evidence.into(),
+            signature: packet.signature,
+            public_key: packet.public_key,
+        }
+    }
+}
+
+fn serialize_legacy_evidence<'a>(
+    evidence: &EvidencePacket,
+    buffer: &'a mut [u8],
+) -> Result<&'a [u8], AttestationError> {
+    postcard::to_slice(&LegacyEvidencePacket::from(evidence), buffer)
+        .map(|bytes| &bytes[..])
+        .map_err(AttestationError::Serialization)
+}
+
 fn sha256_digest(bytes: &[u8]) -> [u8; 32] {
     let digest = Sha256::digest(bytes);
     let mut output = [0_u8; 32];
@@ -459,6 +614,14 @@ mod tests {
         verify_evidence(&signed_evidence).unwrap();
         assert!(signed_evidence.evidence.physics_verdict);
         assert_eq!(signed_evidence.evidence, evidence);
+        assert_eq!(signed_evidence.evidence.diagnostics.trust_level_code, 0);
+        assert_eq!(
+            signed_evidence
+                .evidence
+                .diagnostics
+                .gps_squared_mahalanobis_distance,
+            2.0
+        );
     }
 
     #[test]
@@ -471,6 +634,21 @@ mod tests {
         signed_evidence.evidence.physics_verdict = true;
 
         assert!(verify_evidence(&signed_evidence).is_err());
+    }
+
+    #[test]
+    fn default_diagnostics_preserve_compact_legacy_packet_shape() {
+        let evidence = EvidencePacket {
+            timestamp_ns: 42,
+            telemetry_hash: [1_u8; 32],
+            physics_verdict: true,
+            state_snapshot: [0.0; super::STATE_SNAPSHOT_LEN],
+            diagnostics: super::EvidenceDiagnostics::default(),
+        };
+        let mut buffer = [0_u8; 256];
+        let encoded = super::serialize_evidence(&evidence, &mut buffer).unwrap();
+
+        assert!(encoded.len() < 120);
     }
 
     #[test]
@@ -492,6 +670,8 @@ mod tests {
         assert_eq!(summary.total_packets, 2);
         assert_eq!(summary.trusted_verdicts, 1);
         assert_eq!(summary.flagged_or_rejected_verdicts, 1);
+        assert_eq!(summary.diagnostic_packets, 2);
+        assert!(summary.max_gps_squared_mahalanobis_distance >= 50.0);
         assert_ne!(summary.evidence_chain_root, [0_u8; 32]);
     }
 
@@ -586,7 +766,7 @@ mod tests {
     fn framed_bytes(packets: &[super::SignedEvidencePacket]) -> Vec<u8> {
         let mut output = Vec::new();
         for packet in packets {
-            let mut buffer = [0_u8; 384];
+            let mut buffer = [0_u8; 768];
             let encoded = postcard::to_slice(packet, &mut buffer).unwrap();
             output.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
             output.extend_from_slice(encoded);

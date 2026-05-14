@@ -222,9 +222,9 @@ Observed on `2026-05-13`:
 
 | Dataset | Rows x iterations | Throughput | Mean / p95 / max per iteration | Verdicts |
 | --- | ---: | ---: | ---: | ---: |
-| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3850.1 evaluations/s` | `258.98 / 269.86 / 1003.50 us` | `60 / 0 / 0` |
+| `artifacts/px4_monitor_dataset.csv` | `60 x 50` | `3912.4 evaluations/s` | `254.53 / 264.02 / 438.70 us` | `60 / 0 / 0` |
 
-The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `192` bytes, and `SignedEvidencePacket` at `208` bytes. The run writes `artifacts/px4_monitor_profile_report.json` and passed the configured host acceptance gate. This is host profiling only; target flight hardware remains unmeasured.
+The reported type-size snapshot includes `MonitorDatasetRow` at `240` bytes, `EskfState` at `1008` bytes, `StateCovariance` at `900` bytes, `StatisticalMonitor` at `192` bytes, `EvidencePacket` at `208` bytes, and `SignedEvidencePacket` at `304` bytes. The run writes `artifacts/px4_monitor_profile_report.json` and passed the configured host acceptance gate. This is host profiling only; target flight hardware remains unmeasured.
 
 ## Limitations
 

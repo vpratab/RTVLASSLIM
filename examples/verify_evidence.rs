@@ -27,6 +27,22 @@ fn run() -> Result<(), String> {
         "  flagged/rejected verdicts: {}",
         summary.flagged_or_rejected_verdicts
     );
+    println!("  diagnostic packets: {}", summary.diagnostic_packets);
+    if summary.diagnostic_packets > 0 {
+        println!(
+            "  max GPS D_M^2: {:.3}",
+            summary.max_gps_squared_mahalanobis_distance
+        );
+        println!("  max risk: {:.3}", summary.max_accumulated_risk);
+        println!(
+            "  max horizontal residual (m): {:.3}",
+            summary.max_horizontal_position_residual_m
+        );
+        println!(
+            "  max horizontal velocity residual (m/s): {:.3}",
+            summary.max_horizontal_velocity_residual_mps
+        );
+    }
     if let Some(first_timestamp_ns) = summary.first_timestamp_ns {
         println!("  first timestamp (ns): {first_timestamp_ns}");
     }

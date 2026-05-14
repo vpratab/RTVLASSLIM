@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-const MAX_SIGNED_EVIDENCE_PACKET_BYTES: usize = 384;
+const MAX_SIGNED_EVIDENCE_PACKET_BYTES: usize = 768;
 
 pub trait TelemetrySource {
     fn recv_next(&mut self) -> Result<TelemetryUpdate, TelemetryError>;
@@ -971,6 +971,8 @@ mod tests {
 
         assert_eq!(restored.evidence.timestamp_ns, signed.evidence.timestamp_ns);
         assert_eq!(restored.public_key, signed.public_key);
+        assert_eq!(restored.evidence.diagnostics.trust_level_code, 0);
+        assert_eq!(restored.evidence.diagnostics.accumulated_risk, 0.5);
     }
 
     #[test]
